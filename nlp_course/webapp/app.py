@@ -229,6 +229,9 @@ class RunManager:
 
     def start(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
         dataset = str(cfg.get("dataset") or "jsonl")
+        allowed = [s.strip() for s in (os.environ.get("WEBAPP_ALLOWED_DATASETS") or "xsum").split(",") if s.strip()]
+        if dataset not in allowed:
+            raise SystemExit(f"Dataset '{dataset}' is disabled on this server. Allowed: {', '.join(allowed)}")
         run_name = str(cfg.get("run_name") or f"{dataset}")
         run_dir = _make_run_dir(run_name=run_name)
 

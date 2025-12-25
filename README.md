@@ -14,17 +14,23 @@ This repo contains a lightweight pipeline to:
 
 ## Run generation (logs + optional embeddings)
 
-Example using the included toy dataset:
+Example using XSum:
 
 ```bash
 python scripts/run_ollama_matrix.py \
-  --docs data/example_docs.jsonl \
+  --dataset xsum \
   --prompts-dir prompts \
   --models ministral-3:8b \
   --seeds 1 2 3 4 5 \
   --top-logprobs 20 \
   --embed-model nomic-embed-text \
   --run-dir runs/example
+```
+
+This repo intentionally does not ship `data/xsum_dataset.jsonl`. Create it locally:
+
+```bash
+python scripts/fetch_xsum_jsonl.py --out data/xsum_dataset.jsonl --split validation
 ```
 
 ## Web UI (Flask)
@@ -70,29 +76,9 @@ Notes:
 - This avoids opening port 5000 in your EC2 Security Group.
 - The UI calls Ollama from the server’s perspective. If Ollama is on the same EC2 instance, keep `Ollama URL = http://localhost:11434`.
 
-## Use CNN/DailyMail (HF datasets)
-
-This downloads the dataset via `datasets.load_dataset("abisee/cnn_dailymail", "3.0.0")` and maps:
-- `article` -> `text`
-- `highlights` -> `reference`
-- `id` -> `doc_id`
-
-```bash
-python scripts/run_ollama_matrix.py \
-  --dataset cnn_dailymail \
-  --split validation \
-  --max-docs 200 \
-  --shuffle --shuffle-seed 0 \
-  --prompts-dir prompts \
-  --models ministral-3:8b \
-  --seeds 1 2 3 4 5 \
-  --top-logprobs 20 \
-  --run-dir runs/cnn_dm_val_200
-```
-
 ## Use XSum (local JSONL)
 
-This repo includes `data/xsum_dataset.jsonl` and maps:
+This repo expects a local `data/xsum_dataset.jsonl` and maps:
 - `id` -> `doc_id`
 - `document` -> `text`
 - `summary` -> `reference`

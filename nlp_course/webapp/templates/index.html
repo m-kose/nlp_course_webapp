@@ -60,25 +60,14 @@
         <label for="dataset">Dataset</label>
         <select id="dataset" name="dataset">
           <option value="xsum">xsum (local data/xsum_dataset.jsonl)</option>
-          <option value="cnn_dailymail">cnn_dailymail (HF datasets)</option>
-          <option value="jsonl">jsonl (custom)</option>
         </select>
+        <div class="hint muted">This web UI is configured to run only the XSum dataset.</div>
       </div>
 
       <div class="field" id="docs-field">
-        <label for="docs">Docs path (server-side)</label>
-        <input id="docs" name="docs" type="text" placeholder="data/example_docs.jsonl" />
-        <div class="hint muted">For <code>jsonl</code>, this is required. For <code>xsum</code>, it’s optional.</div>
-        <div class="hint">
-          <input id="docs-upload" type="file" />
-          <button class="btn btn-small" type="button" id="upload-docs">Upload</button>
-          <span class="muted" id="upload-status"></span>
-        </div>
-      </div>
-
-      <div class="field" id="split-field">
-        <label for="split">HF split</label>
-        <input id="split" name="split" type="text" value="validation" />
+        <label for="docs">XSum JSONL path (server-side, optional)</label>
+        <input id="docs" name="docs" type="text" placeholder="data/xsum_dataset.jsonl" />
+        <div class="hint muted">Leave empty to use the default <code>data/xsum_dataset.jsonl</code> (or <code>$XSUM_JSONL</code>).</div>
       </div>
 
       <div class="field">
@@ -414,15 +403,8 @@
 
     function updateDatasetFields() {
       const ds = $("dataset").value;
-      $("split-field").style.display = (ds === "cnn_dailymail") ? "block" : "none";
-      $("docs-field").style.display = (ds === "jsonl" || ds === "xsum") ? "block" : "none";
-      if (ds === "xsum") {
-        $("docs").placeholder = "data/xsum_dataset.jsonl (optional)";
-      } else if (ds === "jsonl") {
-        $("docs").placeholder = "data/example_docs.jsonl (required)";
-      } else {
-        $("docs").placeholder = "";
-      }
+      $("docs-field").style.display = (ds === "xsum") ? "block" : "none";
+      $("docs").placeholder = "data/xsum_dataset.jsonl";
     }
 
     function applyPreset(kind) {
@@ -526,7 +508,7 @@
       if (!embedModel) {
         rec.push("Embedding metrics later? Pick an embedding model now.");
       }
-      if (!maxDocs && (ds === "cnn_dailymail" || ds === "xsum")) {
+      if (!maxDocs && ds === "xsum") {
         rec.push("Tip: set Max docs to bound run size.");
       }
       if (models === 0) {
@@ -555,25 +537,6 @@
     $("prompt_ids").addEventListener("change", updateRunSummary);
     $("embed_model").addEventListener("change", updateRunSummary);
 
-    $("upload-docs").addEventListener("click", async () => {
-      const fileEl = $("docs-upload");
-      if (!fileEl.files || !fileEl.files.length) return;
-      $("upload-status").textContent = "Uploading…";
-      const fd = new FormData();
-      fd.append("file", fileEl.files[0]);
-      const resp = await fetch("/api/uploads", { method: "POST", body: fd });
-      const data = await resp.json();
-      if (!data.ok) {
-        $("upload-status").textContent = `Error: ${data.error || "upload failed"}`;
-        return;
-      }
-      $("docs").value = data.path;
-      $("upload-status").textContent = `Uploaded: ${data.path}`;
-      if ($("dataset").value === "xsum") {
-        // leave as-is
-      }
-    });
-
     $("run-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       $("start-status").textContent = "Starting…";
@@ -582,7 +545,7 @@
         ollama_url: $("ollama_url").value.trim(),
         dataset: $("dataset").value,
         docs: $("docs").value.trim() || null,
-        split: $("split").value.trim(),
+        split: "validation",
         hf_cache_dir: $("hf_cache_dir").value.trim() || null,
         connect_timeout_s: $("connect_timeout_s").value ? Number($("connect_timeout_s").value) : null,
         read_timeout_s: $("read_timeout_s").value ? Number($("read_timeout_s").value) : null,
