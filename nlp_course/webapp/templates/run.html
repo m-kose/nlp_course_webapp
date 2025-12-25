@@ -10,6 +10,8 @@
       </div>
       <div class="row gap">
         <button class="btn btn-danger btn-lg" id="stop-run">Stop</button>
+        <a class="btn btn-secondary" href="/runs/{{ run_id }}/export/summaries.csv">Download summaries (CSV)</a>
+        <a class="btn btn-secondary" href="/runs/{{ run_id }}/files/generations.jsonl">Download raw (JSONL)</a>
         <a class="btn btn-secondary" href="{{ url_for('index') }}">New run</a>
       </div>
     </div>

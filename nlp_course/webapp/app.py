@@ -8,13 +8,15 @@ import time
 import uuid
 import csv
 import re
+from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
+from io import StringIO
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
-from flask import Flask, abort, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 
 from nlp_course.run_logger import RunLogger
@@ -397,6 +399,68 @@ def create_app() -> Flask:
     def _cleanup() -> None:
         mgr.cleanup_finished()
 
+    @app.before_request
+    def _maybe_require_token() -> Any:
+        required = (os.environ.get("WEBAPP_TOKEN") or "").strip()
+        if not required:
+            return None
+
+        if request.endpoint == "static" or request.path.startswith("/static/"):
+            return None
+
+        if request.path == "/auth":
+            return None
+
+        provided = ((request.headers.get("X-Auth-Token") or "").strip() or (request.args.get("token") or "").strip())
+
+        if provided != required:
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "Unauthorized", "auth_required": True}), 401
+            next_url = request.full_path or request.path
+            if next_url.endswith("?"):
+                next_url = next_url[:-1]
+            parts = urlsplit(next_url)
+            qs = [(k, v) for (k, v) in parse_qsl(parts.query, keep_blank_values=True) if k != "token"]
+            next_url = urlunsplit(("", "", parts.path, urlencode(qs, doseq=True), parts.fragment))
+            return redirect("/auth?" + urlencode({"next": next_url}), code=302)
+
+        return None
+
+    def _safe_next_url(raw: str | None) -> str:
+        if not raw:
+            return "/"
+        raw = str(raw)
+        if len(raw) > 2048:
+            return "/"
+        if raw.startswith("//") or "://" in raw:
+            return "/"
+        if not raw.startswith("/"):
+            return "/"
+        return raw
+
+    @app.get("/auth")
+    def auth_get():
+        next_url = _safe_next_url(request.args.get("next"))
+        return render_template("auth.html", next_url=next_url, error=None)
+
+    @app.post("/auth")
+    def auth_post():
+        required = (os.environ.get("WEBAPP_TOKEN") or "").strip()
+        if not required:
+            return redirect("/", code=302)
+
+        token = (request.form.get("token") or "").strip()
+        next_url = _safe_next_url(request.form.get("next"))
+        if token != required:
+            return render_template("auth.html", next_url=next_url, error="Invalid token."), 401
+
+        parts = urlsplit(next_url)
+        qs = parse_qsl(parts.query, keep_blank_values=True)
+        qs = [(k, v) for (k, v) in qs if k != "token"]
+        qs.append(("token", token))
+        dest = urlunsplit(("", "", parts.path, urlencode(qs, doseq=True), parts.fragment))
+        return redirect(dest, code=302)
+
     @app.get("/")
     def index():
         return render_template("index.html")
@@ -634,6 +698,62 @@ def create_app() -> Flask:
         if not target.exists() or not target.is_file():
             abort(404)
         return send_from_directory(run_dir, rel_path, as_attachment=True)
+
+    @app.get("/runs/<run_id>/export/summaries.csv")
+    def run_export_summaries_csv(run_id: str):
+        run_dir = RUNS_DIR / run_id
+        if not run_dir.exists():
+            abort(404)
+        gens_path = run_dir / "generations.jsonl"
+        if not gens_path.exists():
+            abort(404)
+
+        def gen() -> Iterable[str]:
+            header = [
+                "ts_start_unix",
+                "ts_end_unix",
+                "model",
+                "prompt_id",
+                "doc_id",
+                "seed",
+                "summary",
+                "reference",
+                "error",
+            ]
+            buf = StringIO()
+            w = csv.writer(buf)
+            w.writerow(header)
+            yield buf.getvalue()
+
+            with gens_path.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    row = [
+                        rec.get("ts_start_unix"),
+                        rec.get("ts_end_unix"),
+                        rec.get("model"),
+                        rec.get("prompt_id"),
+                        rec.get("doc_id"),
+                        rec.get("seed"),
+                        rec.get("summary"),
+                        rec.get("reference"),
+                        rec.get("error"),
+                    ]
+                    buf = StringIO()
+                    w = csv.writer(buf)
+                    w.writerow(row)
+                    yield buf.getvalue()
+
+        headers = {"Content-Disposition": f'attachment; filename="summaries_{run_id}.csv"'}
+        return Response(gen(), mimetype="text/csv; charset=utf-8", headers=headers)
 
     return app
 

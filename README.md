@@ -47,6 +47,14 @@ Then open `http://127.0.0.1:5000` and start a run. The UI can:
 - Live-tail `events.jsonl` / `generations.jsonl` while a run is executing
 - Edit/create prompt templates (writes into `prompts/`)
 
+Optional (recommended if you ever open the port publicly): require an access token:
+
+```bash
+WEBAPP_TOKEN="change-me" python -m nlp_course.webapp
+```
+
+Then visit `http://127.0.0.1:5000/?token=change-me` (or open `/auth` to paste the token). The UI will keep using the token for API calls, but page loads require `?token=...`.
+
 ### Access the web UI from your laptop (SSH tunnel)
 
 If the server is running on a remote machine (e.g. AWS EC2), keep the Flask server bound to `127.0.0.1` (default) and use an SSH tunnel from your laptop:
@@ -84,7 +92,7 @@ python scripts/run_ollama_matrix.py \
 
 ## Use XSum (local JSONL)
 
-This app expects an XSum-format JSONL at `data/xsum_dataset.jsonl` (not included in this public repo). It maps:
+This repo includes `data/xsum_dataset.jsonl` and maps:
 - `id` -> `doc_id`
 - `document` -> `text`
 - `summary` -> `reference`

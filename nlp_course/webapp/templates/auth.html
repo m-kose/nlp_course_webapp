@@ -1,0 +1,35 @@
+{% extends "layout.html" %}
+{% block title %}Access required{% endblock %}
+
+{% block content %}
+  <section class="card" style="max-width: 620px; margin: 28px auto;">
+    <div class="card-header" style="align-items: start;">
+      <div>
+        <h1 class="page-title" style="margin-bottom: 6px;">Access token required</h1>
+        <p class="page-subtitle" style="max-width: 56ch;">
+          This server is protected. Enter the token you were given to continue.
+        </p>
+      </div>
+    </div>
+
+    {% if error %}
+      <div class="callout danger" style="margin-bottom: 14px;">
+        <div class="callout-title">Unauthorized</div>
+        <div class="muted">{{ error }}</div>
+      </div>
+    {% endif %}
+
+    <form method="post" action="/auth" class="grid" autocomplete="off">
+      <input type="hidden" name="next" value="{{ next_url }}" />
+      <div class="field span-all">
+        <label for="token">Token</label>
+        <input id="token" name="token" type="password" placeholder="Paste token here…" autofocus />
+        <div class="hint muted">Tip: if you were given a link with <code>?token=…</code>, just open that link instead.</div>
+      </div>
+      <div class="actions span-all">
+        <button class="btn btn-primary btn-lg" type="submit">Continue</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}
+

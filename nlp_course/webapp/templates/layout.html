@@ -14,6 +14,61 @@
         document.documentElement.dataset.theme = theme;
       })();
     </script>
+    <script>
+      (function () {
+        const KEY = "nlp_course_token_session";
+        const params = new URLSearchParams(window.location.search || "");
+        const urlToken = (params.get("token") || "").trim();
+        if (urlToken) {
+          try {
+            sessionStorage.setItem(KEY, urlToken);
+          } catch (_) {}
+        }
+        const token = urlToken || (function () {
+          try {
+            return (sessionStorage.getItem(KEY) || "").trim();
+          } catch (_) {
+            return "";
+          }
+        })();
+        window.__NLP_COURSE_TOKEN = token;
+
+        const origFetch = window.fetch ? window.fetch.bind(window) : null;
+        if (!origFetch) return;
+        window.fetch = function (input, init) {
+          const t = window.__NLP_COURSE_TOKEN || "";
+          if (!t) return origFetch(input, init);
+          try {
+            const u = new URL(typeof input === "string" ? input : input.url, window.location.origin);
+            if (u.origin === window.location.origin) {
+              init = init || {};
+              const headers = new Headers(init.headers || {});
+              if (!headers.has("X-Auth-Token")) headers.set("X-Auth-Token", t);
+              init.headers = headers;
+            }
+          } catch (_) {}
+          return origFetch(input, init);
+        };
+
+        document.addEventListener("DOMContentLoaded", () => {
+          const t = window.__NLP_COURSE_TOKEN || "";
+          if (!t) return;
+          for (const a of Array.from(document.querySelectorAll("a[href]"))) {
+            const href = a.getAttribute("href") || "";
+            if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("javascript:")) continue;
+            let u;
+            try {
+              u = new URL(href, window.location.origin);
+            } catch (_) {
+              continue;
+            }
+            if (u.origin !== window.location.origin) continue;
+            if (!u.searchParams.has("token")) u.searchParams.set("token", t);
+            a.setAttribute("href", u.pathname + u.search + u.hash);
+          }
+        });
+      })();
+    </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
   </head>
   <body>
