@@ -27,11 +27,7 @@ python scripts/run_ollama_matrix.py \
   --run-dir runs/example
 ```
 
-This repo intentionally does not ship `data/xsum_dataset.jsonl`. Create it locally:
-
-```bash
-python scripts/fetch_xsum_jsonl.py --out data/xsum_dataset.jsonl --split validation
-```
+This repo expects a local `data/xsum_dataset.jsonl` (not included). Place the file there (or set `XSUM_JSONL`).
 
 ## Web UI (Flask)
 
