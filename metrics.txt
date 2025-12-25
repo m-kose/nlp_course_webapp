@@ -1,0 +1,234 @@
+!!!
+Use the ollama model: ministral-3:8b
+!!!
+Use the conda env: llm
+!!!
+
+Below is a **metric menu** that makes sense for *your exact setup*: **summarization**, comparing **prompt techniques** *and* **model families** (Qwen vs LLaMA vs Mistral), while doing **generation via Ollama** (not HF). I’ll include the “boring” ones you already plan (ROUGE/BLEU/BERTScore/BARTScore) and then the “scientific” Ollama-friendly ones (logprobs + embeddings).
+
+Before any metric: make sure each run logs what you need.
+
+## What to log from Ollama (so you can compute the metrics)
+
+For every `(model, prompt_id, doc_id, seed)` call:
+
+* Use `POST /api/generate` with:
+
+  * `stream: false`
+  * `logprobs: true`
+  * `top_logprobs: N` (e.g., 20) ([docs.ollama.com][1])
+  * fixed decoding options (temperature, top_p, seed, num_ctx, num_predict), either in request `options` or baked into a Modelfile ([docs.ollama.com][1])
+* Save:
+
+  * `response` (the summary text),
+  * `logprobs` objects (per-token logprob + top alternatives), ([docs.ollama.com][1])
+  * `prompt_eval_count`, `eval_count`, and durations (`prompt_eval_duration`, `eval_duration`) ([docs.ollama.com][1])
+
+For embedding-based metrics, also call `POST /api/embed` (doc + summary) and store vectors. ([docs.ollama.com][2])
+
+---
+
+# A) “Boring” but necessary baselines
+
+### 1) ROUGE (ROUGE-1/2/L)
+
+**What it measures:** n-gram / longest-common-subsequence overlap vs reference summary.
+**Why for your case:** everyone expects it; it’s a stable anchor for prompt/model comparisons (especially on extractive-ish datasets).
+**How to use:** compute ROUGE for each `(model, prompt)` across docs; report mean + bootstrap CI; also report ROUGE **at fixed length buckets** (because prompts can change length a lot).
+
+### 2) BLEU
+
+**What it measures:** n-gram precision vs reference (with brevity penalty).
+**Why:** mostly a sanity baseline; can be misleading for paraphrasing-heavy prompts, but good to report.
+**How:** use sacrebleu; interpret mainly as “surface-form closeness.”
+
+### 3) BERTScore
+
+**What it measures:** semantic similarity using contextual embeddings (token alignment).
+**Why:** helps when prompts force paraphrase or different structure (bullets vs paragraph), where ROUGE/BLEU drop unfairly.
+**How:** compute precision/recall/F1; compare prompt families; often report F1.
+
+### 4) BARTScore
+
+**What it measures:** a generative scorer: how likely the reference is under a BART model conditioned on candidate (or vice versa depending on variant).
+**Why:** usually correlates better with “overall quality” than ROUGE in some settings; good additional axis.
+**How (with Ollama generation):** you still compute BARTScore in a separate Python step (it’s an evaluator); generation being Ollama doesn’t block this.
+
+> These four give you the “expected” paper table.
+
+---
+
+# B) Ollama-native “spicy” metrics (logprobs + embeddings, no internals)
+
+## 5) Length & Compression Control (must-have diagnostic)
+
+**What:** summary length in tokens/words + compression ratio (summary_len / doc_len).
+**Why:** prompts change length dramatically, and ROUGE/BLEU are length-sensitive. You need to show: “prompt A is better” isn’t just “prompt A is longer.”
+**How:**
+
+* doc tokens: from your tokenizer of choice or Ollama `prompt_eval_count` (counts input tokens) ([docs.ollama.com][1])
+* summary tokens: `eval_count` ([docs.ollama.com][1])
+* Always report metrics **conditioned on length** or with length as covariate.
+
+---
+
+## 6) Sequence NLL / Per-token Surprise (probabilistic quality signal)
+
+**What:** average negative log-likelihood of generated tokens:
+[
+\text{NLL} = -\frac{1}{T}\sum_{t=1}^T \log p(y_t)
+]
+(using the returned per-token logprobs). ([docs.ollama.com][1])
+**Why for your case:** different prompt techniques can make the model generate text that is more/less “natural” under its own distribution. Comparing NLL deltas across prompt families often reveals whether a prompt is pushing the model into awkward, low-probability wording.
+**How:**
+
+* In your `/api/generate` call set `logprobs: true` ([docs.ollama.com][1])
+* Sum the per-token logprobs for the sampled tokens; divide by length.
+* Compare **within each model** relative to baseline prompt P0 (so different model calibrations don’t confuse you).
+
+---
+
+## 7) Entropy Profile (uncertainty dynamics over the summary)
+
+**What:** per-step entropy of next-token distribution:
+[
+H_t = -\sum_w p_t(w)\log p_t(w)
+]
+**Why:** prompt techniques often change *how* the model decides (confident + templated vs exploratory + then convergent). Planning prompts should show distinct “entropy phases.”
+**How (with Ollama):**
+
+* Request `top_logprobs: N` (e.g., 20) along with `logprobs` ([docs.ollama.com][1])
+* Approximate entropy using the top-N probabilities plus an “OTHER” bucket:
+
+  * (p_{\text{other}} = 1 - \sum_{i\le N} p_i)
+  * include (-p_{\text{other}}\log p_{\text{other}})
+* From the entropy series, compute:
+
+  * mean entropy, entropy slope, spike count.
+
+(Entropy is approximate because you don’t have the full vocab; but it’s consistent across prompts/models if you use the same N.)
+
+---
+
+## 8) Typicality & Instability Across Seeds (robustness of a prompt technique)
+
+**What:** run K generations with different seeds per `(model, prompt, doc)` and compute:
+
+* variance of NLL,
+* variance of embedding (or similarity),
+* typicality z-score of your “main decoding” vs the prompt’s own sample distribution.
+
+**Why:** prompt techniques that “work” but are unstable aren’t great—especially in small LMs. This also highlights model-family differences (some families are more prompt-sensitive).
+**How:**
+
+* Use the `seed` parameter (either in `options` or Modelfile) ([docs.ollama.com][3])
+* For each cell, run (say) K=5 seeds:
+
+  * compute mean/std of NLL and/or entropy,
+  * compute pairwise cosine similarity between summary embeddings (below).
+* Report “stability” per prompt family and per model family.
+
+---
+
+## 9) Prompt–Summary Mutual Information (does the summary “encode” the prompt technique?)
+
+**What:** estimate (I(S;P \mid D, M)): how much knowing the summary tells you which prompt was used (given the same doc and model).
+**Why:** it answers a core research question directly: **which prompt techniques actually leave a behavioral footprint** (vs being ignored). Also lets you compare model families on “instruction uptake.”
+**How:**
+
+1. Generate summaries for all prompts on the same docs.
+2. Get embeddings for each summary using `/api/embed`. ([docs.ollama.com][2])
+3. Train a classifier to predict `prompt_id` from summary embedding (train per model).
+4. Convert classifier cross-entropy into an MI estimate:
+
+   * if prompts are uniform: (H(P)=\log K)
+   * (I \approx H(P) - \mathbb{E}[H(P\mid S)])
+
+High MI ⇒ prompt technique strongly shapes outputs.
+
+---
+
+## 10) Doc–Summary Contrastive Alignment (InfoNCE / retrieval score)
+
+**What:** measure how well a summary embedding matches its source doc embedding vs other docs (a lower bound proxy for doc–summary MI).
+**Why:** prompt techniques can make summaries more generic (“safe TL;DR”) or more doc-specific. This metric directly measures doc-specificity without relying on a reference summary.
+**How:**
+
+1. Embed each doc and summary with `/api/embed` (use one consistent embedding model for all model families). ([docs.ollama.com][2])
+2. Compute:
+
+   * retrieval Recall@k: does summary retrieve its own doc among a pool?
+   * or InfoNCE loss:
+     [
+     \mathcal{L} = -\log \frac{\exp(\text{sim}(d,s)/\tau)}{\sum_{d'} \exp(\text{sim}(d',s)/\tau)}
+     ]
+3. Aggregate by `(model, prompt)`.
+
+This is one of the best “scientific” metrics you can do with Ollama-only tooling.
+
+---
+
+## 11) Prompt Reliance Index (PRI): “how much did the prompt change the output?”
+
+**What:** compare each prompt’s output to a fixed baseline prompt (P0) on the same doc.
+**Why:** separates:
+
+* prompts that improve quality *by subtly steering*,
+* vs prompts that produce drastically different summaries (sometimes better, sometimes worse).
+  Also reveals model-family differences in “prompt obedience.”
+
+**How:** for each doc:
+
+* generate `S0` under P0 and `SP` under prompt P,
+* compute:
+
+  * embedding distance: (1 - \cos(e(S0), e(SP)))
+  * optional lexical diff (ROUGE between S0 and SP)
+    High PRI means prompt heavily changes behavior; low PRI means it’s mostly ignored.
+
+---
+
+## 12) Prompt Cost / Throughput (efficiency metric)
+
+**What:** prompt_eval_count, eval_count, and durations per run (tokens/sec, latency). ([docs.ollama.com][1])
+**Why:** prompt techniques aren’t “free.” Longer prompts, few-shot examples, and plan-then-summarize can cost much more compute. When comparing prompt techniques in small models, efficiency is a real scientific dimension.
+**How:** from the `/api/generate` response:
+
+* input tokens: `prompt_eval_count` ([docs.ollama.com][1])
+* output tokens: `eval_count` ([docs.ollama.com][1])
+* time: `prompt_eval_duration`, `eval_duration` ([docs.ollama.com][1])
+  Compute:
+* total latency,
+* output tokens / second,
+* “quality per token” (e.g., ROUGE per generated token).
+
+---
+
+## 13) Boilerplate / Genericity Index (detect template-y summarization)
+
+**What:** how similar a prompt’s summaries are *across different documents*.
+**Why:** some prompt+model combos produce “safe generic summaries” that score okay but aren’t doc-specific. This is especially relevant when comparing model families.
+**How:** per `(model, prompt)`:
+
+* compute average pairwise similarity of summary embeddings across docs (higher = more generic),
+* and/or repeated n-gram rate across docs.
+
+---
+
+# If you want a tight “final” metric set
+
+If you don’t want to drown in metrics, a very defensible package is:
+
+* **ROUGE / BLEU / BERTScore / BARTScore**
+* **Length & compression**
+* **NLL + entropy profile**
+* **Stability across seeds**
+* **Prompt–summary MI**
+* **Doc–summary contrastive alignment**
+* **Prompt reliance index**
+* **Prompt cost (latency/tokens/sec)**
+
+All of those are **fully compatible with “Ollama for generation”** using `/api/generate` logprobs/top_logprobs ([docs.ollama.com][1]) and `/api/embed` embeddings ([docs.ollama.com][2]), and they directly support your research question: *prompt techniques × model families for summarization*.
+
+If you tell me (1) which dataset style you’re using (news vs scientific vs long docs) and (2) how many prompts you’ll keep (e.g. 10–12), I can propose an exact run matrix (docs × prompts × models × seeds) and which plots/tables to produce for each metric.
+

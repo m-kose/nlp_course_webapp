@@ -1,0 +1,627 @@
+{% extends "layout.html" %}
+{% block title %}nlp_course – web{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="card-header">
+      <div>
+        <h1 class="page-title">Runs</h1>
+        <p class="page-subtitle">
+          Configure a generation run (dataset × prompts × models × seeds), then compute metrics on the resulting logs.
+        </p>
+      </div>
+      <div class="row gap">
+        <button class="btn btn-secondary" id="preset-quick">Preset: quick</button>
+        <button class="btn btn-secondary" id="preset-proper">Preset: proper</button>
+        <button class="btn btn-secondary" id="preset-full">Preset: full</button>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-bottom: 14px;">
+      <div class="callout-title">Before you start</div>
+      <div class="muted" style="line-height: 1.6;">
+        Make sure Ollama is running on the same machine as this server (default <code>http://localhost:11434</code>).
+        Use “Refresh models” to verify connectivity.
+        If you plan to compute embedding-based metrics later, set an “Embedding model” now.
+      </div>
+    </div>
+
+    <form id="run-form" class="grid" autocomplete="off">
+      <div class="span-all">
+        <h3>Connection</h3>
+      </div>
+      <div class="field">
+        <label for="ollama_url">Ollama URL</label>
+        <input id="ollama_url" name="ollama_url" type="text" value="http://localhost:11434" />
+        <div class="hint wrap">
+          <button class="btn btn-small" type="button" id="refresh-models">Refresh models</button>
+          <span class="muted" id="models-status"></span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="models">Models (multi-select)</label>
+        <select id="models" name="models" multiple size="6"></select>
+        <div class="hint muted">These are pulled from Ollama’s <code>/api/tags</code>.</div>
+      </div>
+
+      <div class="field">
+        <label for="embed_model">Embedding model (optional)</label>
+        <select id="embed_model" name="embed_model">
+          <option value="">(none)</option>
+        </select>
+        <div class="hint muted">If set, the runner calls <code>/api/embed</code> for doc + summary.</div>
+      </div>
+
+      <div class="span-all">
+        <h3>Dataset</h3>
+      </div>
+      <div class="field">
+        <label for="dataset">Dataset</label>
+        <select id="dataset" name="dataset">
+          <option value="xsum">xsum (local data/xsum_dataset.jsonl)</option>
+          <option value="cnn_dailymail">cnn_dailymail (HF datasets)</option>
+          <option value="jsonl">jsonl (custom)</option>
+        </select>
+      </div>
+
+      <div class="field" id="docs-field">
+        <label for="docs">Docs path (server-side)</label>
+        <input id="docs" name="docs" type="text" placeholder="data/example_docs.jsonl" />
+        <div class="hint muted">For <code>jsonl</code>, this is required. For <code>xsum</code>, it’s optional.</div>
+        <div class="hint">
+          <input id="docs-upload" type="file" />
+          <button class="btn btn-small" type="button" id="upload-docs">Upload</button>
+          <span class="muted" id="upload-status"></span>
+        </div>
+      </div>
+
+      <div class="field" id="split-field">
+        <label for="split">HF split</label>
+        <input id="split" name="split" type="text" value="validation" />
+      </div>
+
+      <div class="field">
+        <label for="max_docs">Max docs</label>
+        <input id="max_docs" name="max_docs" type="number" min="1" placeholder="200" />
+        <div class="hint muted">Used for the run matrix estimate and for sampling larger datasets.</div>
+      </div>
+
+      <div class="field checkbox">
+        <label>
+          <input id="shuffle" name="shuffle" type="checkbox" />
+          Shuffle docs
+        </label>
+      </div>
+
+      <div class="field">
+        <label for="shuffle_seed">Shuffle seed</label>
+        <input id="shuffle_seed" name="shuffle_seed" type="number" value="0" />
+      </div>
+
+      <div class="span-all">
+        <h3>Prompts</h3>
+      </div>
+      <div class="field">
+        <label for="prompts_dir">Prompts dir</label>
+        <input id="prompts_dir" name="prompts_dir" type="text" value="prompts" />
+        <div class="hint">
+          <button class="btn btn-small" type="button" id="refresh-prompts">Refresh prompts</button>
+          <button class="btn btn-small" type="button" id="manage-prompts">Manage prompts</button>
+          <span class="muted" id="prompts-status"></span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="prompt_ids">Prompt IDs (optional subset)</label>
+        <select id="prompt_ids" name="prompt_ids" multiple size="6"></select>
+        <div class="hint muted">Leave empty to run all prompts in the folder.</div>
+      </div>
+
+      <div class="field">
+        <label for="seeds">Seeds</label>
+        <input id="seeds" name="seeds" type="text" value="1 2 3 4 5" />
+        <div class="hint muted">Space or comma separated (e.g. <code>1 2 3</code>).</div>
+      </div>
+
+      <div class="span-all">
+        <h3>Sampling</h3>
+      </div>
+      <div class="field">
+        <label for="top_logprobs">Top logprobs</label>
+        <input id="top_logprobs" name="top_logprobs" type="number" value="20" min="1" />
+      </div>
+
+      <div class="field">
+        <label for="temperature">Temperature</label>
+        <input id="temperature" name="temperature" type="number" value="0.2" step="0.01" min="0" />
+      </div>
+
+      <div class="field">
+        <label for="top_p">Top-p</label>
+        <input id="top_p" name="top_p" type="number" value="0.95" step="0.01" min="0" max="1" />
+      </div>
+
+      <div class="field">
+        <label for="num_ctx">Context tokens</label>
+        <input id="num_ctx" name="num_ctx" type="number" value="4096" min="256" />
+      </div>
+
+      <div class="field">
+        <label for="num_predict">Max new tokens</label>
+        <input id="num_predict" name="num_predict" type="number" value="512" min="1" />
+      </div>
+
+      <div class="field">
+        <label for="run_name">Run name</label>
+        <input id="run_name" name="run_name" type="text" placeholder="xsum_200" />
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced</summary>
+        <div class="grid" style="margin-top: 12px;">
+          <div class="field">
+            <label for="hf_cache_dir">HF cache dir (optional)</label>
+            <input id="hf_cache_dir" name="hf_cache_dir" type="text" placeholder="(leave empty)" />
+          </div>
+          <div class="field">
+            <label for="connect_timeout_s">Connect timeout (s)</label>
+            <input id="connect_timeout_s" name="connect_timeout_s" type="number" step="0.5" value="5" min="0.5" />
+          </div>
+          <div class="field">
+            <label for="read_timeout_s">Read timeout (s)</label>
+            <input id="read_timeout_s" name="read_timeout_s" type="number" step="1" value="300" min="1" />
+          </div>
+          <div class="field">
+            <label for="status_every">Status every N generations</label>
+            <input id="status_every" name="status_every" type="number" value="1" min="0" />
+          </div>
+          <div class="field checkbox">
+            <label>
+              <input id="no_preflight" name="no_preflight" type="checkbox" />
+              Skip Ollama preflight
+            </label>
+          </div>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button class="btn btn-primary btn-lg" type="submit" id="start-run">Start run</button>
+        <span class="muted" id="start-status"></span>
+      </div>
+
+      <div class="span-all">
+        <div class="callout">
+          <div class="callout-title">Estimated run size</div>
+          <div class="muted" id="run-summary" style="line-height: 1.6;">—</div>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Runs</h2>
+      <button class="btn btn-small" type="button" id="refresh-runs">Refresh</button>
+    </div>
+    <div id="runs-list" class="runs"></div>
+  </section>
+
+  <div id="prompt-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="prompt-modal-title">
+    <div class="modal-backdrop" id="prompt-modal-backdrop"></div>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="prompt-modal-title">Prompt editor</h2>
+        <button class="btn btn-small" type="button" id="prompt-close">Close</button>
+      </div>
+      <div class="muted" style="margin-bottom: 10px;">Directory: <code id="prompt-modal-dir"></code></div>
+      <div class="prompt-manager">
+        <div class="prompt-list">
+          <div class="row gap" style="margin-bottom: 10px;">
+            <input id="prompt-new-id" type="text" placeholder="new_prompt_id" />
+            <button class="btn btn-small" type="button" id="prompt-new">New</button>
+          </div>
+          <div id="prompt-items" class="prompt-items"></div>
+        </div>
+        <div class="prompt-editor">
+          <div class="row gap" style="justify-content: space-between; margin-bottom: 10px;">
+            <div class="muted">Selected: <code id="prompt-selected">(none)</code></div>
+            <div class="row gap">
+              <button class="btn btn-secondary btn-small" type="button" id="prompt-reload">Reload</button>
+              <button class="btn btn-primary btn-small" type="button" id="prompt-save">Save</button>
+            </div>
+          </div>
+          <textarea id="prompt-text" class="prompt-text" spellcheck="false" placeholder="Prompt text..."></textarea>
+          <div class="hint muted"><span id="prompt-status"></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let lastPromptCount = 0;
+
+    function selectedValues(selectEl) {
+      return Array.from(selectEl.selectedOptions).map((o) => o.value);
+    }
+
+    function setOptions(selectEl, values, { keepSelection = true, includeBlank = false } = {}) {
+      const selected = keepSelection ? new Set(selectedValues(selectEl)) : new Set();
+      selectEl.innerHTML = "";
+      if (includeBlank) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "(none)";
+        selectEl.appendChild(opt);
+      }
+      for (const v of values) {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = v;
+        if (selected.has(v)) opt.selected = true;
+        selectEl.appendChild(opt);
+      }
+    }
+
+    async function refreshModels() {
+      $("models-status").textContent = "Loading…";
+      const url = new URL("/api/ollama/tags", window.location.origin);
+      url.searchParams.set("ollama_url", $("ollama_url").value);
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (!data.ok) {
+        $("models-status").textContent = `Error: ${data.error}`;
+        setOptions($("models"), []);
+        setOptions($("embed_model"), [], { includeBlank: true, keepSelection: false });
+        updateRunSummary();
+        return;
+      }
+      $("models-status").textContent = `${data.models.length} models`;
+      setOptions($("models"), data.models);
+      setOptions($("embed_model"), data.models, { includeBlank: true });
+      updateRunSummary();
+    }
+
+    async function refreshPrompts() {
+      $("prompts-status").textContent = "Loading…";
+      const url = new URL("/api/prompts", window.location.origin);
+      url.searchParams.set("prompts_dir", $("prompts_dir").value);
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (!data.ok) {
+        $("prompts-status").textContent = `Error: ${data.error}`;
+        setOptions($("prompt_ids"), []);
+        lastPromptCount = 0;
+        updateRunSummary();
+        return;
+      }
+      $("prompts-status").textContent = `${data.prompts.length} prompts`;
+      setOptions($("prompt_ids"), data.prompts);
+      lastPromptCount = (data.prompts || []).length;
+      updateRunSummary();
+    }
+
+    // Prompt manager modal
+    let promptSelected = null;
+
+    function openPromptModal() {
+      $("prompt-modal").classList.remove("hidden");
+      $("prompt-modal-dir").textContent = $("prompts_dir").value.trim() || "prompts";
+      $("prompt-status").textContent = "";
+      loadPromptList();
+    }
+    function closePromptModal() {
+      $("prompt-modal").classList.add("hidden");
+    }
+
+    async function loadPromptList(selectId = null) {
+      $("prompt-items").innerHTML = `<div class="muted">Loading…</div>`;
+      const url = new URL("/api/prompts", window.location.origin);
+      url.searchParams.set("prompts_dir", $("prompts_dir").value);
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (!data.ok) {
+        $("prompt-items").innerHTML = `<div class="muted">Error: ${data.error}</div>`;
+        return;
+      }
+      const prompts = data.prompts || [];
+      const host = $("prompt-items");
+      host.innerHTML = "";
+      for (const p of prompts) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "prompt-item";
+        btn.textContent = p;
+        btn.addEventListener("click", () => selectPrompt(p));
+        host.appendChild(btn);
+      }
+      if (!prompts.length) {
+        host.innerHTML = `<div class="muted">No prompts found.</div>`;
+      }
+      if (selectId) {
+        await selectPrompt(selectId);
+      } else if (promptSelected && prompts.includes(promptSelected)) {
+        await selectPrompt(promptSelected);
+      } else if (prompts.length) {
+        await selectPrompt(prompts[0]);
+      }
+    }
+
+    async function selectPrompt(promptId) {
+      promptSelected = promptId;
+      $("prompt-selected").textContent = promptId;
+      $("prompt-status").textContent = "Loading…";
+      const url = new URL(`/api/prompts/${encodeURIComponent(promptId)}`, window.location.origin);
+      url.searchParams.set("prompts_dir", $("prompts_dir").value);
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (!data.ok) {
+        $("prompt-status").textContent = `Error: ${data.error}`;
+        return;
+      }
+      $("prompt-text").value = data.content || "";
+      $("prompt-status").textContent = "";
+      // highlight selected
+      for (const el of Array.from(document.querySelectorAll(".prompt-item"))) {
+        el.classList.toggle("active", el.textContent === promptId);
+      }
+    }
+
+    async function savePrompt() {
+      const promptId = promptSelected;
+      if (!promptId) return;
+      $("prompt-status").textContent = "Saving…";
+      const payload = {
+        prompts_dir: $("prompts_dir").value,
+        prompt_id: promptId,
+        content: $("prompt-text").value,
+      };
+      const resp = await fetch("/api/prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!data.ok) {
+        $("prompt-status").textContent = `Error: ${data.error || "save failed"}`;
+        return;
+      }
+      $("prompt-status").textContent = "Saved.";
+      await loadPromptList(promptId);
+      await refreshPrompts();
+    }
+
+    $("manage-prompts").addEventListener("click", openPromptModal);
+    $("prompt-close").addEventListener("click", closePromptModal);
+    $("prompt-modal-backdrop").addEventListener("click", closePromptModal);
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !$("prompt-modal").classList.contains("hidden")) closePromptModal();
+    });
+    $("prompt-reload").addEventListener("click", () => {
+      if (promptSelected) selectPrompt(promptSelected);
+    });
+    $("prompt-save").addEventListener("click", savePrompt);
+    $("prompt-new").addEventListener("click", async () => {
+      const raw = ($("prompt-new-id").value || "").trim();
+      if (!raw) return;
+      promptSelected = raw;
+      $("prompt-selected").textContent = raw;
+      $("prompt-text").value = "";
+      $("prompt-status").textContent = "New prompt (edit then Save).";
+      $("prompt-new-id").value = "";
+    });
+
+    function updateDatasetFields() {
+      const ds = $("dataset").value;
+      $("split-field").style.display = (ds === "cnn_dailymail") ? "block" : "none";
+      $("docs-field").style.display = (ds === "jsonl" || ds === "xsum") ? "block" : "none";
+      if (ds === "xsum") {
+        $("docs").placeholder = "data/xsum_dataset.jsonl (optional)";
+      } else if (ds === "jsonl") {
+        $("docs").placeholder = "data/example_docs.jsonl (required)";
+      } else {
+        $("docs").placeholder = "";
+      }
+    }
+
+    function applyPreset(kind) {
+      const ds = $("dataset").value;
+      if (kind === "quick") {
+        $("max_docs").value = "2";
+        $("seeds").value = "1";
+        $("top_logprobs").value = "10";
+        $("num_predict").value = "256";
+        $("shuffle").checked = false;
+        $("run_name").value = `${ds}_quick`;
+      } else if (kind === "proper") {
+        $("max_docs").value = "25";
+        $("seeds").value = "1 2 3";
+        $("top_logprobs").value = "20";
+        $("num_predict").value = "512";
+        $("shuffle").checked = true;
+        $("shuffle_seed").value = "0";
+        $("run_name").value = `${ds}_proper`;
+      } else if (kind === "full") {
+        $("max_docs").value = "200";
+        $("seeds").value = "1 2 3 4 5";
+        $("top_logprobs").value = "20";
+        $("num_predict").value = "512";
+        $("shuffle").checked = true;
+        $("shuffle_seed").value = "0";
+        $("run_name").value = `${ds}_full`;
+      }
+      updateRunSummary();
+    }
+
+    async function refreshRuns() {
+      const resp = await fetch("/api/runs");
+      const data = await resp.json();
+      const list = $("runs-list");
+      list.innerHTML = "";
+      if (!data.ok) {
+        list.textContent = `Error: ${data.error || "failed to load runs"}`;
+        return;
+      }
+      for (const r of data.runs) {
+        const a = document.createElement("a");
+        a.href = `/runs/${encodeURIComponent(r.run_id)}`;
+        a.className = "run-item";
+        const state = r.state || "unknown";
+        const prog = (r.total_calls && r.generations_count != null)
+          ? `${r.generations_count}/${r.total_calls}`
+          : `${r.generations_count || 0}`;
+        a.innerHTML = `
+          <div class="run-row">
+            <div>
+              <div class="run-id">${r.run_id}</div>
+              <div class="muted">${r.run_dir}</div>
+            </div>
+            <div class="right">
+              <span class="badge badge-${state}">${state}</span>
+              <span class="muted">${prog}</span>
+            </div>
+          </div>`;
+        list.appendChild(a);
+      }
+      if (!data.runs.length) {
+        list.innerHTML = `<div class="muted">No runs yet.</div>`;
+      }
+    }
+
+    function parseSeedsCount() {
+      const raw = ($("seeds").value || "").trim();
+      if (!raw) return 1;
+      const parts = raw.replaceAll(",", " ").split(/\s+/).filter(Boolean);
+      const nums = parts.map((p) => Number(p)).filter((n) => Number.isFinite(n));
+      return Math.max(1, nums.length || 1);
+    }
+
+    function selectedPromptCount() {
+      const selected = selectedValues($("prompt_ids"));
+      return selected.length ? selected.length : lastPromptCount;
+    }
+
+    function updateRunSummary() {
+      const models = selectedValues($("models")).length;
+      const prompts = selectedPromptCount();
+      const seeds = parseSeedsCount();
+      const maxDocs = $("max_docs").value ? Number($("max_docs").value) : null;
+      const ds = $("dataset").value;
+      const embedModel = $("embed_model").value || "";
+
+      const parts = [];
+      parts.push(`models=${models || 0}`);
+      parts.push(`prompts=${prompts || 0}${selectedValues($("prompt_ids")).length ? " (subset)" : ""}`);
+      parts.push(`seeds=${seeds}`);
+      parts.push(`dataset=${ds}`);
+      if (maxDocs) parts.push(`max_docs=${maxDocs}`);
+
+      let estimate = null;
+      if (models > 0 && prompts > 0 && maxDocs) {
+        estimate = models * prompts * seeds * maxDocs;
+      }
+
+      const rec = [];
+      if (!embedModel) {
+        rec.push("Embedding metrics later? Pick an embedding model now.");
+      }
+      if (!maxDocs && (ds === "cnn_dailymail" || ds === "xsum")) {
+        rec.push("Tip: set Max docs to bound run size.");
+      }
+      if (models === 0) {
+        rec.push("Select at least one model.");
+      }
+
+      $("run-summary").textContent =
+        `${parts.join(" · ")}\n` +
+        (estimate != null ? `Estimated generations (upper bound): ${estimate.toLocaleString()}\n` : `Estimated generations: set “Max docs” to compute an upper bound.\n`) +
+        (rec.length ? `\n${rec.join(" ")}` : "");
+    }
+
+    $("dataset").addEventListener("change", () => {
+      updateDatasetFields();
+      updateRunSummary();
+    });
+    $("refresh-models").addEventListener("click", refreshModels);
+    $("refresh-prompts").addEventListener("click", refreshPrompts);
+    $("refresh-runs").addEventListener("click", refreshRuns);
+    $("preset-quick").addEventListener("click", () => applyPreset("quick"));
+    $("preset-proper").addEventListener("click", () => applyPreset("proper"));
+    $("preset-full").addEventListener("click", () => applyPreset("full"));
+    $("seeds").addEventListener("input", updateRunSummary);
+    $("max_docs").addEventListener("input", updateRunSummary);
+    $("models").addEventListener("change", updateRunSummary);
+    $("prompt_ids").addEventListener("change", updateRunSummary);
+    $("embed_model").addEventListener("change", updateRunSummary);
+
+    $("upload-docs").addEventListener("click", async () => {
+      const fileEl = $("docs-upload");
+      if (!fileEl.files || !fileEl.files.length) return;
+      $("upload-status").textContent = "Uploading…";
+      const fd = new FormData();
+      fd.append("file", fileEl.files[0]);
+      const resp = await fetch("/api/uploads", { method: "POST", body: fd });
+      const data = await resp.json();
+      if (!data.ok) {
+        $("upload-status").textContent = `Error: ${data.error || "upload failed"}`;
+        return;
+      }
+      $("docs").value = data.path;
+      $("upload-status").textContent = `Uploaded: ${data.path}`;
+      if ($("dataset").value === "xsum") {
+        // leave as-is
+      }
+    });
+
+    $("run-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      $("start-status").textContent = "Starting…";
+
+      const payload = {
+        ollama_url: $("ollama_url").value.trim(),
+        dataset: $("dataset").value,
+        docs: $("docs").value.trim() || null,
+        split: $("split").value.trim(),
+        hf_cache_dir: $("hf_cache_dir").value.trim() || null,
+        connect_timeout_s: $("connect_timeout_s").value ? Number($("connect_timeout_s").value) : null,
+        read_timeout_s: $("read_timeout_s").value ? Number($("read_timeout_s").value) : null,
+        status_every: $("status_every").value ? Number($("status_every").value) : null,
+        no_preflight: $("no_preflight").checked,
+        max_docs: $("max_docs").value ? Number($("max_docs").value) : null,
+        shuffle: $("shuffle").checked,
+        shuffle_seed: Number($("shuffle_seed").value || 0),
+        prompts_dir: $("prompts_dir").value.trim(),
+        prompt_ids: selectedValues($("prompt_ids")),
+        models: selectedValues($("models")),
+        seeds: $("seeds").value,
+        top_logprobs: Number($("top_logprobs").value || 20),
+        temperature: Number($("temperature").value || 0.2),
+        top_p: Number($("top_p").value || 0.95),
+        num_ctx: Number($("num_ctx").value || 4096),
+        num_predict: Number($("num_predict").value || 512),
+        embed_model: $("embed_model").value || null,
+        run_name: $("run_name").value.trim() || null,
+      };
+
+      const resp = await fetch("/api/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!data.ok) {
+        $("start-status").textContent = `Error: ${data.error || "failed"}`;
+        return;
+      }
+      $("start-status").textContent = "Started.";
+      window.location.href = `/runs/${encodeURIComponent(data.run_id)}`;
+    });
+
+    updateDatasetFields();
+    refreshModels();
+    refreshPrompts();
+    refreshRuns();
+    updateRunSummary();
+  </script>
+{% endblock %}

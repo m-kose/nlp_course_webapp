@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>{% block title %}nlp_course web{% endblock %}</title>
+    <script>
+      (function () {
+        const key = "nlp_course_theme";
+        const saved = localStorage.getItem(key);
+        const prefersLight =
+          window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+        const theme = saved || (prefersLight ? "light" : "dark");
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="wrap topbar-inner">
+        <div class="topbar-left">
+          <a class="brand" href="{{ url_for('index') }}">nlp_course</a>
+          <nav class="nav" aria-label="Primary">
+            <a href="{{ url_for('index') }}">Runs</a>
+          </nav>
+        </div>
+        <div class="topbar-right">
+          <button class="btn btn-small" id="theme-toggle" type="button">Theme</button>
+        </div>
+      </div>
+    </header>
+    <main class="wrap">
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="footer wrap">
+      <span class="muted">Flask UI for the Ollama summarization pipeline.</span>
+    </footer>
+    <script>
+      (function () {
+        const btn = document.getElementById("theme-toggle");
+        if (!btn) return;
+        const key = "nlp_course_theme";
+        function setLabel(theme) {
+          btn.textContent = theme === "light" ? "Light" : "Dark";
+        }
+        function setTheme(theme) {
+          document.documentElement.dataset.theme = theme;
+          localStorage.setItem(key, theme);
+          setLabel(theme);
+        }
+        const current = document.documentElement.dataset.theme || "dark";
+        setLabel(current);
+        btn.addEventListener("click", () => {
+          const now = document.documentElement.dataset.theme || "dark";
+          setTheme(now === "dark" ? "light" : "dark");
+        });
+      })();
+    </script>
+  </body>
+</html>

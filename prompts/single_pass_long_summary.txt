@@ -1,0 +1,11 @@
+Read the entire document provided below. Provide a comprehensive summary that includes:
+
+    1-An executive overview (1 paragraph).
+
+    2-Key findings (bullet points).
+
+    3-Methodology or Arguments used.
+
+    4-A conclusion.
+
+Ensure that the summary is self-contained and does not require referring back to the original text.

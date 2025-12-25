@@ -1,0 +1,1545 @@
+{% extends "layout.html" %}
+{% block title %}Run {{ run_id }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="card-header">
+      <div>
+        <h1 class="page-title">Run <code>{{ run_id }}</code></h1>
+        <p class="page-subtitle">Live view of generation logs and post-hoc metrics computed from <code>runs/&lt;run&gt;</code>.</p>
+      </div>
+      <div class="row gap">
+        <button class="btn btn-danger btn-lg" id="stop-run">Stop</button>
+        <a class="btn btn-secondary" href="{{ url_for('index') }}">New run</a>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="stat">
+        <div class="muted">State</div>
+        <div id="state" class="stat-value">…</div>
+      </div>
+      <div class="stat">
+        <div class="muted">Progress</div>
+        <div id="progress" class="stat-value">…</div>
+        <div class="progress">
+          <div id="bar" class="bar" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="stat">
+        <div class="muted">Current cell</div>
+        <div id="cell" class="stat-value">…</div>
+      </div>
+      <div class="stat">
+        <div class="muted">Run dir</div>
+        <div id="run-dir" class="stat-value">…</div>
+      </div>
+      <div class="stat">
+        <div class="muted">Elapsed (generation)</div>
+        <div id="elapsed" class="stat-value">—</div>
+      </div>
+      <div class="stat">
+        <div class="muted">Metrics runtime</div>
+        <div id="metrics-runtime" class="stat-value">—</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="tabs" role="tablist" aria-label="Run sections">
+    <button class="tab active" id="tabbtn-generate" role="tab" aria-selected="true" aria-controls="tab-generate" type="button">Generate</button>
+    <button class="tab" id="tabbtn-metrics" role="tab" aria-selected="false" aria-controls="tab-metrics" type="button">Metrics</button>
+  </div>
+
+  <div id="tab-generate" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-generate">
+    <section class="card">
+      <div class="card-header">
+        <h2>Events</h2>
+        <span class="muted">Tail of <code>events.jsonl</code></span>
+      </div>
+      <pre id="events" class="log"></pre>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Generations</h2>
+        <span class="muted">Live view of <code>generations.jsonl</code></span>
+      </div>
+      <div class="grid gen-controls">
+        <div class="field">
+          <label for="gen-filter-model">Model</label>
+          <select id="gen-filter-model">
+            <option value="">(all)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gen-filter-prompt">Prompt</label>
+          <select id="gen-filter-prompt">
+            <option value="">(all)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gen-filter-seed">Seed</label>
+          <select id="gen-filter-seed">
+            <option value="">(all)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gen-filter-doc">Doc id contains</label>
+          <input id="gen-filter-doc" type="text" placeholder="e.g. 10185247" />
+        </div>
+        <div class="field">
+          <label for="gen-height">Card height</label>
+          <input id="gen-height" type="range" min="120" max="650" value="240" />
+          <div class="hint muted"><span id="gen-height-value">240px</span></div>
+        </div>
+        <div class="field checkbox">
+          <label>
+            <input id="gen-errors-only" type="checkbox" />
+            Errors only
+          </label>
+        </div>
+        <div class="field checkbox">
+          <label>
+            <input id="gen-auto-scroll" type="checkbox" checked />
+            Auto-scroll to newest
+          </label>
+        </div>
+      </div>
+      <div class="hint muted"><span id="gen-count"></span></div>
+      <div id="generations" class="gens"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Stdout / Stderr</h2>
+        <span class="muted">Runner console logs (debug)</span>
+      </div>
+      <div class="grid grid-2">
+        <div>
+          <div class="muted">stdout</div>
+          <pre id="stdout" class="log"></pre>
+        </div>
+        <div>
+          <div class="muted">stderr</div>
+          <pre id="stderr" class="log"></pre>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="tab-metrics" class="tab-panel hidden" role="tabpanel" aria-labelledby="tabbtn-metrics">
+    <section class="card">
+      <div class="card-header">
+        <h2>Metrics</h2>
+        <span class="muted">Runs <code>scripts/compute_metrics.py</code> and renders quick views</span>
+      </div>
+      <div class="grid grid-2">
+        <div class="field">
+          <label for="baseline_prompt">Baseline prompt id (optional, for PRI)</label>
+          <select id="baseline_prompt">
+            <option value="">(none)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="tau">Tau (InfoNCE temperature)</label>
+          <input id="tau" type="number" step="0.01" value="0.07" />
+        </div>
+        <div class="field">
+          <label for="retrieval_k">Retrieval k (comma-separated)</label>
+          <input id="retrieval_k" type="text" value="1,5,10" />
+        </div>
+        <div class="field span-all">
+          <label>Metric groups to compute</label>
+          <div class="checklist">
+            <label class="check"><input id="m-reference" type="checkbox" checked /> ROUGE / BLEU (reference-based)</label>
+            <label class="check"><input id="m-logprobs" type="checkbox" checked /> Logprobs (NLL + entropy)</label>
+            <label class="check"><input id="m-embeddings" type="checkbox" /> Embeddings (MI / retrieval / genericity / PRI)</label>
+            <label class="check"><input id="m-bertscore" type="checkbox" /> BERTScore (slow)</label>
+            <label class="check"><input id="m-bartscore" type="checkbox" /> BARTScore (very slow)</label>
+          </div>
+          <div class="hint muted">
+            Tip: start with “fast” (ROUGE/BLEU + logprobs). BERTScore/BARTScore can be heavy on large runs.
+          </div>
+          <div class="row gap">
+            <button class="btn btn-small btn-secondary" type="button" id="metrics-preset-fast">Preset: fast</button>
+            <button class="btn btn-small btn-secondary" type="button" id="metrics-preset-embed">Preset: embed</button>
+            <button class="btn btn-small btn-secondary" type="button" id="metrics-preset-full">Preset: full</button>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary btn-lg" id="compute-metrics">Compute metrics</button>
+          <button class="btn btn-secondary" id="refresh-metrics" type="button">Refresh results</button>
+          <span class="muted" id="metrics-status"></span>
+        </div>
+      </div>
+      <div class="hint muted" id="metrics-meta"></div>
+      <div class="hint muted">
+        Outputs into <code>runs/&lt;run&gt;/metrics/</code>. Quick links:
+        <a href="/runs/{{ run_id }}/files/metrics/per_generation.csv">per_generation.csv</a> ·
+        <a href="/runs/{{ run_id }}/files/metrics/by_model_prompt.csv">by_model_prompt.csv</a> ·
+        <a href="/runs/{{ run_id }}/files/metrics/retrieval_alignment.csv">retrieval_alignment.csv</a>
+      </div>
+
+      <div class="metrics-block">
+        <div class="metrics-panels">
+          <section class="panel-card">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Leaderboard</div>
+                <div class="panel-subtitle">A “figure-like” plot (points + optional CI). Use Sort to rank; disable it to keep a fixed layout for comparisons.</div>
+              </div>
+              <div class="muted" id="metrics-chart-note"></div>
+            </div>
+
+            <div class="grid grid-2">
+              <div class="field">
+                <label for="metrics-metric">Metric</label>
+                <select id="metrics-metric">
+                  <option value="rougeL_f_mean">rougeL_f_mean</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="metrics-group">Grouping</label>
+                <select id="metrics-group">
+                  <option value="model_prompt">model / prompt</option>
+                  <option value="model">model (avg over prompts)</option>
+                  <option value="prompt">prompt (avg over models)</option>
+                </select>
+                <div class="hint muted">Aggregation uses weighted mean by <code>n</code> when available.</div>
+              </div>
+              <div class="field">
+                <label for="metrics-topn">Show top N</label>
+                <input id="metrics-topn" type="range" min="5" max="60" value="30" />
+                <div class="hint muted"><span id="metrics-topn-label">30</span></div>
+              </div>
+              <div class="field checklist-row">
+                <label>Options</label>
+                <div class="checklist">
+                  <label class="check"><input id="metrics-sort" type="checkbox" checked /> Sort (best on top)</label>
+                  <label class="check"><input id="metrics-ci" type="checkbox" checked /> Show CI</label>
+                  <label class="check"><input id="metrics-compact-labels" type="checkbox" checked /> Compact labels</label>
+                </div>
+              </div>
+            </div>
+
+            <details class="advanced" style="margin-top: 12px;" id="metric-explainer">
+              <summary>What does this metric mean?</summary>
+              <div class="muted" style="margin-top: 10px; line-height: 1.6;" id="metric-explainer-body"></div>
+            </details>
+
+            <div class="figure-card">
+              <div class="chart-host" id="metrics-chart"></div>
+            </div>
+          </section>
+
+          <section class="panel-card">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Tables</div>
+                <div class="panel-subtitle">A lightweight view (truncated) of the metrics CSVs. Click headers to sort.</div>
+              </div>
+              <div class="muted"><span id="metrics-table-count"></span></div>
+            </div>
+
+            <div class="grid grid-2">
+              <div class="field">
+                <label for="metrics-table-select">Table</label>
+                <select id="metrics-table-select">
+                  <option value="by_model_prompt.csv">by_model_prompt.csv</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="metrics-search">Filter rows</label>
+                <input id="metrics-search" type="text" placeholder="Filter the current table…" />
+                <div class="hint muted">Searches across all visible columns.</div>
+              </div>
+              <div class="field span-all">
+                <label>Display</label>
+                <div class="checklist">
+                  <label class="check"><input id="metrics-show-all-cols" type="checkbox" /> Show all columns (per_generation)</label>
+                </div>
+              </div>
+            </div>
+
+            <div id="metrics-table" class="table-wrap"></div>
+          </section>
+        </div>
+        <details class="advanced" style="margin-top: 12px;">
+          <summary>Logs</summary>
+          <div class="grid grid-2" style="margin-top: 10px;">
+            <div>
+              <div class="muted">metrics stdout</div>
+              <pre id="metrics-stdout" class="log"></pre>
+            </div>
+            <div>
+              <div class="muted">metrics stderr</div>
+              <pre id="metrics-stderr" class="log"></pre>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const runId = "{{ run_id }}";
+    const $ = (id) => document.getElementById(id);
+    const offsets = { events: 0, generations: 0, stdout: 0, stderr: 0, metrics_stdout: 0, metrics_stderr: 0 };
+    const tabKey = `nlp_course_run_tab_${runId}`;
+    const genHeightKey = `nlp_course_gen_height`;
+
+    const gens = [];
+    const genKeys = new Set();
+    const genModels = new Set();
+    const genPrompts = new Set();
+    const genSeeds = new Set();
+    let baselinePromptsDir = "prompts";
+    let metricsTables = null;
+    let runStartMs = null;
+    let runStopMs = null;
+    let metricsLastElapsedS = null;
+    let metricsTimer = null;
+    let runTimer = null;
+    const metricsKey = `nlp_course_metrics_selection`;
+    const showAllColsKey = `nlp_course_metrics_show_all_cols`;
+    const metricsChartSortKey = `nlp_course_metrics_chart_sort`;
+    const metricsCompactLabelsKey = `nlp_course_metrics_chart_compact`;
+    let metricsSort = { col: null, dir: 1 };
+    const baseOrderByGrouping = { model_prompt: null, model: null, prompt: null };
+
+    function setTab(tab) {
+      const isGen = tab === "generate";
+      $("tab-generate").classList.toggle("hidden", !isGen);
+      $("tab-metrics").classList.toggle("hidden", isGen);
+      $("tabbtn-generate").classList.toggle("active", isGen);
+      $("tabbtn-metrics").classList.toggle("active", !isGen);
+      $("tabbtn-generate").setAttribute("aria-selected", isGen ? "true" : "false");
+      $("tabbtn-metrics").setAttribute("aria-selected", isGen ? "false" : "true");
+      localStorage.setItem(tabKey, tab);
+      if (!isGen) {
+        // The metrics tab is hidden by default; redraw to get correct widths.
+        setTimeout(() => {
+          renderMetricsFigure();
+          renderMetricsTable();
+        }, 0);
+      }
+    }
+
+    $("tabbtn-generate").addEventListener("click", () => setTab("generate"));
+    $("tabbtn-metrics").addEventListener("click", () => setTab("metrics"));
+    setTab(localStorage.getItem(tabKey) || "generate");
+
+    function fmtCell(cell) {
+      if (!cell) return "—";
+      const parts = [];
+      if (cell.doc_id != null) parts.push(`doc=${cell.doc_id}`);
+      if (cell.prompt_id != null) parts.push(`prompt=${cell.prompt_id}`);
+      if (cell.model != null) parts.push(`model=${cell.model}`);
+      if (cell.seed != null) parts.push(`seed=${cell.seed}`);
+      return parts.join(" | ") || "—";
+    }
+
+    function appendLog(preEl, lines) {
+      if (!lines.length) return;
+      preEl.textContent += lines.join("\\n") + "\\n";
+      if (preEl.textContent.length > 200_000) {
+        preEl.textContent = preEl.textContent.slice(-200_000);
+      }
+      preEl.scrollTop = preEl.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    }
+
+    function setOptions(selectEl, values) {
+      const current = selectEl.value;
+      selectEl.innerHTML = `<option value="">(all)</option>`;
+      for (const v of values) {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = v;
+        selectEl.appendChild(opt);
+      }
+      if (values.includes(current)) selectEl.value = current;
+    }
+
+    function updateGenOptions() {
+      setOptions($("gen-filter-model"), Array.from(genModels).sort());
+      setOptions($("gen-filter-prompt"), Array.from(genPrompts).sort());
+      setOptions($("gen-filter-seed"), Array.from(genSeeds).sort((a, b) => Number(a) - Number(b)));
+    }
+
+    function currentGenFilters() {
+      return {
+        model: $("gen-filter-model").value,
+        prompt_id: $("gen-filter-prompt").value,
+        seed: $("gen-filter-seed").value,
+        doc_contains: $("gen-filter-doc").value.trim(),
+        errors_only: $("gen-errors-only").checked,
+      };
+    }
+
+    function matchGen(obj, f) {
+      if (f.model && String(obj.model || "") !== f.model) return false;
+      if (f.prompt_id && String(obj.prompt_id || "") !== f.prompt_id) return false;
+      if (f.seed && String(obj.seed ?? "") !== f.seed) return false;
+      if (f.doc_contains) {
+        const doc = String(obj.doc_id || "");
+        if (!doc.includes(f.doc_contains)) return false;
+      }
+      if (f.errors_only && !obj.error) return false;
+      return true;
+    }
+
+    function renderGenerations() {
+      const wrap = $("generations");
+      const f = currentGenFilters();
+      const filtered = gens.filter((g) => matchGen(g, f));
+      $("gen-count").textContent = `Showing ${filtered.length} of ${gens.length} generations`;
+      wrap.innerHTML = "";
+
+      // Render newest first.
+      for (let i = filtered.length - 1; i >= 0; i--) {
+        const obj = filtered[i];
+        const div = document.createElement("div");
+        div.className = "gen";
+        const header = `${obj.model || "?"} | ${obj.prompt_id || "?"} | doc=${obj.doc_id || "?"} | seed=${obj.seed ?? "?"}`;
+        const summary = (obj.summary || "").trim();
+        const err = obj.error ? String(obj.error) : "";
+        div.innerHTML = `
+          <div class="gen-head">
+            <div class="gen-title">${escapeHtml(header)}</div>
+            ${err ? `<span class="badge badge-failed">error</span>` : ``}
+          </div>
+          ${err ? `<div class="gen-error">${escapeHtml(err)}</div>` : ``}
+          <div class="gen-body">${summary ? escapeHtml(summary) : "<span class='muted'>(empty summary)</span>"}</div>
+        `;
+        wrap.appendChild(div);
+      }
+
+      if ($("gen-auto-scroll").checked) {
+        wrap.scrollTop = 0;
+      }
+    }
+
+    function addGeneration(obj) {
+      const key = [
+        String(obj.model || ""),
+        String(obj.prompt_id || ""),
+        String(obj.doc_id || ""),
+        String(obj.seed ?? ""),
+        String(obj.summary_sha256 || ""),
+        String(obj.ts_end_unix || ""),
+      ].join("|");
+      if (genKeys.has(key)) return;
+      genKeys.add(key);
+      gens.push(obj);
+      if (gens.length > 1000) {
+        gens.splice(0, gens.length - 1000);
+        genKeys.clear();
+        for (const g of gens) {
+          const k = [
+            String(g.model || ""),
+            String(g.prompt_id || ""),
+            String(g.doc_id || ""),
+            String(g.seed ?? ""),
+            String(g.summary_sha256 || ""),
+            String(g.ts_end_unix || ""),
+          ].join("|");
+          genKeys.add(k);
+        }
+      }
+
+      if (obj.model) genModels.add(String(obj.model));
+      if (obj.prompt_id) genPrompts.add(String(obj.prompt_id));
+      if (obj.seed != null) genSeeds.add(String(obj.seed));
+      updateGenOptions();
+      renderGenerations();
+    }
+
+    async function pollStatus() {
+      const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}/status`);
+      const data = await resp.json();
+      if (!data.ok) return;
+      const r = data.run;
+      $("state").textContent = r.state || "unknown";
+      $("run-dir").textContent = r.run_dir || "—";
+      $("cell").textContent = fmtCell(r.last_cell);
+      const done = r.generations_count || 0;
+      const total = r.total_calls;
+      if (total) {
+        $("progress").textContent = `${done} / ${total}`;
+        const pct = Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+        $("bar").style.width = `${pct}%`;
+      } else {
+        $("progress").textContent = String(done);
+        $("bar").style.width = "0%";
+      }
+      $("stop-run").disabled = (r.state !== "running");
+
+      // Run elapsed timer (prefer web_run.json timestamp).
+      if (runStartMs == null) {
+        const ts = r.web && r.web.ts_utc ? String(r.web.ts_utc) : null;
+        const parsed = ts ? Date.parse(ts) : NaN;
+        if (Number.isFinite(parsed)) runStartMs = parsed;
+      }
+      if (r.state !== "running" && runStopMs == null && runStartMs != null) {
+        runStopMs = Date.now();
+      }
+
+      const pd = r.web && r.web.cfg ? r.web.cfg.prompts_dir : null;
+      if (pd && String(pd) !== baselinePromptsDir) {
+        baselinePromptsDir = String(pd);
+        await loadBaselinePrompts(baselinePromptsDir);
+      }
+    }
+
+    async function loadBaselinePrompts(promptsDir) {
+      const url = new URL("/api/prompts", window.location.origin);
+      url.searchParams.set("prompts_dir", promptsDir);
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (!data.ok) return;
+      const sel = $("baseline_prompt");
+      const current = sel.value;
+      sel.innerHTML = `<option value=\"\">(none)</option>`;
+      for (const p of data.prompts || []) {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p;
+        sel.appendChild(opt);
+      }
+      if (current) sel.value = current;
+    }
+
+    async function pollTail(kind) {
+      const url = new URL(`/api/runs/${encodeURIComponent(runId)}/tail`, window.location.origin);
+      url.searchParams.set("file", kind);
+      url.searchParams.set("offset", String(offsets[kind] || 0));
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (!data.ok) return;
+      offsets[kind] = data.offset;
+      const lines = data.lines || [];
+      if (kind === "generations") {
+        for (const ln of lines) {
+          try { addGeneration(JSON.parse(ln)); } catch (_) {}
+        }
+      } else if (kind === "events") {
+        appendLog($("events"), lines);
+      } else if (kind === "stdout") {
+        appendLog($("stdout"), lines);
+      } else if (kind === "stderr") {
+        appendLog($("stderr"), lines);
+      } else if (kind === "metrics_stdout") {
+        appendLog($("metrics-stdout"), lines);
+      } else if (kind === "metrics_stderr") {
+        appendLog($("metrics-stderr"), lines);
+      }
+    }
+
+    async function stopRun() {
+      $("stop-run").disabled = true;
+      await fetch(`/api/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" });
+      await pollStatus();
+    }
+
+    $("stop-run").addEventListener("click", stopRun);
+
+    $("compute-metrics").addEventListener("click", async () => {
+      $("metrics-status").textContent = "Running…";
+      const startedAt = Date.now();
+      if (metricsTimer) clearInterval(metricsTimer);
+      metricsTimer = setInterval(() => {
+        const s = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+        $("metrics-runtime").textContent = `running (${fmtDur(s)})`;
+        $("metrics-status").textContent = `Running… (${fmtDur(s)})`;
+      }, 250);
+      offsets.metrics_stdout = 0;
+      offsets.metrics_stderr = 0;
+      $("metrics-stdout").textContent = "";
+      $("metrics-stderr").textContent = "";
+      const ks = ($("retrieval_k").value || "1,5,10")
+        .split(",")
+        .map((x) => x.trim())
+        .filter((x) => x.length)
+        .map((x) => Number(x))
+        .filter((x) => Number.isFinite(x) && x > 0);
+      const payload = {
+        baseline_prompt: $("baseline_prompt").value || null,
+        tau: Number($("tau").value || 0.07),
+        retrieval_k: ks,
+        metrics: selectedMetrics(),
+      };
+      const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}/compute_metrics`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!data.ok) {
+        $("metrics-status").textContent = `Error (rc=${data.returncode ?? "?"})`;
+        if (metricsTimer) clearInterval(metricsTimer);
+        metricsTimer = null;
+        await pollTail("metrics_stderr");
+        return;
+      }
+      $("metrics-status").textContent = "Done.";
+      if (metricsTimer) clearInterval(metricsTimer);
+      metricsTimer = null;
+      metricsLastElapsedS = Math.max(0, (Date.now() - startedAt) / 1000);
+      $("metrics-runtime").textContent = `last: ${fmtDur(Math.round(metricsLastElapsedS))}`;
+      await pollTail("metrics_stdout");
+      await pollTail("metrics_stderr");
+      await refreshMetricsTables();
+    });
+
+    $("refresh-metrics").addEventListener("click", async () => {
+      await refreshMetricsTables();
+    });
+
+    async function refreshMetricsTables() {
+      const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}/metrics/tables`);
+      const data = await resp.json();
+      if (!data.ok) return;
+      metricsTables = data.tables || {};
+      renderMetricsMeta(data.meta || null);
+      baseOrderByGrouping.model_prompt = null;
+      baseOrderByGrouping.model = null;
+      baseOrderByGrouping.prompt = null;
+
+      const sel = $("metrics-table-select");
+      const current = sel.value || "by_model_prompt.csv";
+      sel.innerHTML = "";
+      const preferred = [
+        "by_model_prompt.csv",
+        "stability_across_seeds.csv",
+        "mi_prompt_from_summary.csv",
+        "retrieval_alignment.csv",
+        "genericity_index.csv",
+        "prompt_reliance_index.csv",
+        "per_generation.csv",
+      ];
+      const available = new Set(data.available || []);
+      for (const name of preferred) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = available.has(name) ? name : `${name} (missing)`;
+        sel.appendChild(opt);
+      }
+      sel.value = preferred.includes(current) ? current : "by_model_prompt.csv";
+      refreshMetricsMetricOptions();
+      renderMetricExplainer();
+      renderMetricsTable();
+      renderMetricsFigure();
+    }
+
+    function asNum(x) {
+      const v = Number(x);
+      return Number.isFinite(v) ? v : null;
+    }
+
+    function fmtDur(totalS) {
+      const s = Math.max(0, Number(totalS) || 0);
+      const hh = Math.floor(s / 3600);
+      const mm = Math.floor((s % 3600) / 60);
+      const ss = Math.floor(s % 60);
+      if (hh > 0) return `${hh}h ${mm}m ${ss}s`;
+      if (mm > 0) return `${mm}m ${ss}s`;
+      return `${ss}s`;
+    }
+
+    function helpIcon(text) {
+      const t = String(text || "");
+      return `<span class="help" data-help="${escapeHtml(t)}" tabindex="0" role="button" aria-label="Help">?</span>`;
+    }
+
+    function attachHelpTooltips() {
+      const tip = ensureTooltip();
+      let pinned = false;
+      function showHelp(el, ev) {
+        const txt = el.getAttribute("data-help") || "";
+        if (!txt) return;
+        tip.innerHTML = `<div style="font-weight:650;">Help</div><div class="muted" style="margin-top:4px; line-height:1.5;">${txt}</div>`;
+        positionTooltip(tip, ev.clientX, ev.clientY);
+        tip.classList.remove("hidden");
+      }
+      function hideHelp() {
+        if (pinned) return;
+        tip.classList.add("hidden");
+      }
+      for (const el of Array.from(document.querySelectorAll(".help[data-help]"))) {
+        if (el.dataset.helpBound === "1") continue;
+        el.dataset.helpBound = "1";
+        el.addEventListener("mousemove", (ev) => showHelp(el, ev));
+        el.addEventListener("mouseleave", hideHelp);
+        el.addEventListener("focus", (ev) => showHelp(el, ev));
+        el.addEventListener("blur", hideHelp);
+        el.addEventListener("mousedown", (ev) => ev.stopPropagation());
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          pinned = !pinned;
+          if (pinned) {
+            showHelp(el, ev);
+            tip.style.pointerEvents = "auto";
+          } else {
+            tip.classList.add("hidden");
+            tip.style.pointerEvents = "none";
+          }
+        });
+      }
+      // Clicking outside unpins/hides.
+      if (!document.body.dataset.helpGlobalBound) {
+        document.body.dataset.helpGlobalBound = "1";
+        document.addEventListener("click", () => {
+          pinned = false;
+          tip.style.pointerEvents = "none";
+          tip.classList.add("hidden");
+        });
+      }
+    }
+
+    function metricDirection(base) {
+      const lower = base.includes("nll") || base.includes("latency") || base.includes("compression") || base.includes("bartscore");
+      return lower ? { dir: "lower", why: "Lower indicates better (loss/cost/latency-style metric)." } : { dir: "higher", why: "Higher indicates better (similarity/quality/throughput-style metric)." };
+    }
+
+    const METRIC_HELP = {
+      rouge1_f: { title: "ROUGE-1 (F1)", because: "Higher indicates more overlap with the reference at the unigram level." },
+      rouge2_f: { title: "ROUGE-2 (F1)", because: "Higher indicates more phrase-level overlap with the reference (stricter than ROUGE-1)." },
+      rougeL_f: { title: "ROUGE-L (F1)", because: "Higher means the summary preserves more of the reference’s sequence structure." },
+      bleu: { title: "BLEU (sentence-level)", because: "Higher means more n-gram precision against the reference (can be brittle for paraphrases)." },
+      bertscore_f1: { title: "BERTScore (F1)", because: "Higher means the summary is semantically closer to the reference." },
+      bartscore_ref_given_hyp_nll: { title: "BARTScore-style NLL (reference | summary)", because: "Lower means the scorer model finds the reference more likely given the summary." },
+      mean_nll: { title: "Mean NLL (from logprobs)", because: "Lower means the model assigned higher probability to the tokens it produced (more self-consistent)." },
+      entropy_mean: { title: "Entropy (mean)", because: "Lower means the model’s next-token distribution was sharper/more confident on average." },
+      entropy_slope: { title: "Entropy slope", because: "Indicates whether uncertainty increases/decreases over the generation; interpretation is task-dependent." },
+      entropy_spike_count: { title: "Entropy spike count", because: "Counts unusually high-uncertainty moments; more spikes can indicate instability." },
+      compression_words: { title: "Compression ratio (words)", because: "Lower means shorter summaries relative to the source; extreme compression can hurt quality." },
+      compression_chars: { title: "Compression ratio (chars)", because: "Lower means shorter summaries relative to the source." },
+      total_latency_s: { title: "Latency (seconds)", because: "Lower is faster; does not directly measure quality." },
+      output_toks_per_s: { title: "Output tokens / second", because: "Higher is faster generation (speed metric)." },
+      infonce: { title: "InfoNCE", because: "Lower indicates better doc–summary alignment (contrastive loss)." },
+      rank: { title: "Retrieval rank", because: "Lower is better (1 = best): rank position of the true document for a given summary." },
+    };
+
+    function columnHelp(tableName, colName) {
+      const c = String(colName || "");
+      const t = String(tableName || "");
+
+      // universal IDs
+      if (c === "model") return "Model name for the row/group.";
+      if (c === "prompt_id") return "Prompt template id (filename stem).";
+      if (c === "doc_id") return "Document id.";
+      if (c === "seed") return "Sampling seed for the generation.";
+      if (c === "n") return "Number of generations aggregated into this row.";
+      if (c === "k_seeds") return "Number of seeds available for this (model, prompt, doc) cell.";
+      if (c === "num_docs") return "Number of documents included for this (model, prompt) group.";
+      if (c === "num_prompts") return "Number of prompts in the MI task for this model.";
+      if (c === "cross_entropy_nats") return "Cross-entropy (nats) when predicting prompt_id from summary embeddings (lower is better).";
+      if (c === "mi_nats") return "Mutual information proxy (nats): higher means prompts leave a stronger signature in summaries.";
+
+      // per-generation lengths/timing
+      if (c === "summary_len_words") return "Summary length in words.";
+      if (c === "doc_len_words") return "Document length in words.";
+      if (c === "summary_len_chars") return "Summary length in characters.";
+      if (c === "doc_len_chars") return "Document length in characters.";
+      if (c === "total_latency_s") return "Wall-clock time per generation (end-start). Lower is faster.";
+      if (c === "output_toks_per_s") return "Throughput estimate (output tokens per second). Higher is faster.";
+
+      // embeddings tables
+      if (c === "infonce") return "InfoNCE loss for doc–summary retrieval alignment. Lower is better.";
+      if (c === "rank") return "Rank of the true document for this summary among the retrieval pool. 1 is best.";
+      if (c.startsWith("recall@")) return `${c}: 1.0 if the true doc is within top-k retrieved, else 0.0. Higher is better.`;
+      if (c === "nll_var") return "Variance of mean_nll across seeds within a cell. Lower suggests more stable generations.";
+      if (c === "mean_abs_typicality_z") return "Mean absolute z-score of NLL within (model,prompt,doc). Lower suggests less outlier behavior across seeds (needs ≥3 seeds to be meaningful).";
+      if (c === "summary_emb_pairwise_cos_mean") return "Average pairwise cosine similarity between seed summaries (embeddings). Higher means more similar across seeds (less diversity).";
+      if (c === "embedding_genericity_mean_pairwise_cos") return "Average pairwise cosine similarity of summaries across different docs. Higher suggests more generic/template-like summaries.";
+      if (c === "repeated_trigram_type_rate") return "Share of trigram types that repeat across docs. Higher suggests more boilerplate.";
+      if (c === "pri_embed_dist") return "Prompt Reliance Index (embedding distance vs baseline prompt). Lower means closer to baseline; higher means prompt changes output more.";
+      if (c === "pri_rougeL_vs_base") return "Lexical similarity (ROUGE-L) between this prompt’s summary and the baseline prompt’s summary. Higher means more similar to baseline.";
+
+      // aggregated metrics (by_model_prompt)
+      const meanSuffix = "_mean";
+      const loSuffix = "_ci_lo";
+      const hiSuffix = "_ci_hi";
+      if (c.endsWith(meanSuffix)) {
+        const base = c.slice(0, -meanSuffix.length);
+        const d = metricDirection(base);
+        const known = METRIC_HELP[base];
+        const title = known ? known.title : base;
+        const because = known ? known.because : d.why;
+        return `${title} (mean)\nDirection: ${d.dir} is better.\nWhy: ${because}\nThis is the mean over generations in the selected group.`;
+      }
+      if (c.endsWith(loSuffix) || c.endsWith(hiSuffix)) {
+        const base = c.replace(loSuffix, "").replace(hiSuffix, "");
+        const known = METRIC_HELP[base];
+        const title = known ? known.title : base;
+        return `${title} (bootstrap CI)\nLower/upper bound of the bootstrap confidence interval for the mean.\nUse this to judge uncertainty; it is not itself “higher/lower is better”.`;
+      }
+
+      // per_generation direct metrics (no suffix)
+      if (METRIC_HELP[c]) {
+        const d = metricDirection(c);
+        return `${METRIC_HELP[c].title}\nDirection: ${d.dir} is better.\nWhy: ${METRIC_HELP[c].because}`;
+      }
+
+      // fallback
+      if (t.includes("per_generation")) return "Column from per_generation.csv (one row per generation).";
+      return "Column from the selected metrics CSV.";
+    }
+
+    function decorateMetricFormLabels() {
+      const tauLabel = document.querySelector("label[for='tau']");
+      if (tauLabel && !tauLabel.querySelector(".help")) {
+        tauLabel.insertAdjacentHTML(
+          "beforeend",
+          " " + helpIcon("InfoNCE temperature (used for retrieval alignment). Lower values make the scoring sharper; higher values soften it.")
+        );
+      }
+      const rkLabel = document.querySelector("label[for='retrieval_k']");
+      if (rkLabel && !rkLabel.querySelector(".help")) {
+        rkLabel.insertAdjacentHTML(
+          "beforeend",
+          " " + helpIcon("Comma-separated k values for recall@k in retrieval_alignment.csv. Example: 1,5,10 checks whether the correct doc ranks within top 1/5/10.")
+        );
+      }
+      const bpLabel = document.querySelector("label[for='baseline_prompt']");
+      if (bpLabel && !bpLabel.querySelector(".help")) {
+        bpLabel.insertAdjacentHTML(
+          "beforeend",
+          " " + helpIcon("Baseline prompt for PRI (prompt reliance). Compares each prompt’s summaries against this baseline on the same (doc, model, seed).")
+        );
+      }
+      const topnLabel = document.querySelector("label[for='metrics-topn']");
+      if (topnLabel && !topnLabel.querySelector(".help")) {
+        topnLabel.insertAdjacentHTML(
+          "beforeend",
+          " " + helpIcon("Controls how many items are plotted. If Sort is ON: top-N by the selected metric. If Sort is OFF: first N in a fixed (stable) order.")
+        );
+      }
+      attachHelpTooltips();
+    }
+
+    function renderMetricExplainer() {
+      const host = $("metric-explainer-body");
+      if (!host) return;
+      const metric = $("metrics-metric").value || "rougeL_f_mean";
+      const base = metric.endsWith("_mean") ? metric.slice(0, -5) : metric;
+      const lowerBetter =
+        base.includes("nll") || base.includes("latency") || base.includes("compression") || base.includes("bartscore");
+
+      const info = {
+        rouge1_f: {
+          title: "ROUGE-1 (F1)",
+          text: "Lexical overlap of unigrams between the generated summary and the reference summary.",
+          needs: "Needs a `reference` field in your docs.",
+          because: "Higher indicates more overlap with the reference at the unigram level.",
+        },
+        rouge2_f: {
+          title: "ROUGE-2 (F1)",
+          text: "Lexical overlap of bigrams between the generated summary and the reference summary.",
+          needs: "Needs a `reference` field in your docs.",
+          because: "Higher indicates more phrase-level overlap with the reference (stricter than ROUGE-1).",
+        },
+        rougeL_f: {
+          title: "ROUGE-L (F1)",
+          text: "Longest-common-subsequence overlap between the generated summary and the reference summary; less sensitive than ROUGE-2 to exact wording.",
+          needs: "Needs a `reference` field in your docs.",
+          because: "Higher means the summary preserves more of the reference’s sequence structure.",
+        },
+        bleu: {
+          title: "BLEU (sentence-level)",
+          text: "N-gram precision with brevity penalty; often a rough baseline for summarization.",
+          needs: "Needs a `reference` field in your docs.",
+          because: "Higher means more n-gram precision against the reference (but can be brittle for paraphrases).",
+        },
+        bertscore_f1: {
+          title: "BERTScore (F1)",
+          text: "Semantic similarity using contextual embeddings; more tolerant to paraphrase/format changes than ROUGE.",
+          needs: "Needs a `reference` field; can be slow and may download weights.",
+          because: "Higher means the summary is semantically closer to the reference (even if wording differs).",
+        },
+        bartscore_ref_given_hyp_nll: {
+          title: "BARTScore-style NLL (reference | summary)",
+          text: "Average per-token negative log-likelihood of the reference conditioned on the generated summary.",
+          needs: "Needs a `reference` field; very slow and may download weights.",
+          because: "Lower means the scorer model finds the reference more likely given the summary (better).",
+        },
+        mean_nll: {
+          title: "Mean NLL (from logprobs)",
+          text: "Average surprise of sampled tokens under the model during generation, computed from stored logprobs.",
+          needs: "Needs logprobs artifacts (run with logprobs enabled).",
+          because: "Lower means the model assigned higher probability to the tokens it produced (more self-consistent).",
+        },
+        entropy_mean: {
+          title: "Entropy (mean)",
+          text: "Approximate next-token uncertainty derived from top-logprobs; higher means the model was less certain.",
+          needs: "Needs logprobs artifacts.",
+          because: "Lower means the model’s next-token distribution was sharper/more confident on average.",
+        },
+        compression_words: {
+          title: "Compression ratio (words)",
+          text: "Summary length divided by document length (words). Lower means more compressed summaries.",
+          needs: "Uses doc/summary lengths recorded in generations.",
+          because: "Lower means shorter summaries relative to the source; extreme compression can hurt quality.",
+        },
+        total_latency_s: {
+          title: "Latency (seconds)",
+          text: "Wall-clock time per generation (end-start).",
+          needs: "Uses timestamps recorded in generations.",
+          because: "Lower is faster, which matters for throughput and cost; doesn’t measure quality.",
+        },
+        output_toks_per_s: {
+          title: "Output tokens / second",
+          text: "Throughput estimate derived from token counts and model eval duration.",
+          needs: "Needs eval_count and eval_duration in the generation response.",
+          because: "Higher means faster generation (speed metric; not a quality metric).",
+        },
+      };
+
+      const entry = info[base] || {
+        title: base,
+        text: "This metric is read from the CSV output. If it’s NaN/empty, it likely wasn’t computed (missing inputs) or was skipped.",
+        needs: "Check your metric-group selection and required run artifacts.",
+        because: lowerBetter ? "Lower is treated as better by the leaderboard sort for this metric family." : "Higher is treated as better by the leaderboard sort for this metric family.",
+      };
+
+      host.innerHTML =
+        `<div style="font-weight:650; margin-bottom: 6px;">${escapeHtml(entry.title)}</div>` +
+        `<div>${escapeHtml(entry.text)}</div>` +
+        `<div class="muted" style="margin-top: 8px;">Direction: <strong>${lowerBetter ? "lower is better" : "higher is better"}</strong> — ${escapeHtml(entry.because || "")}</div>` +
+        `<div class="muted" style="margin-top: 4px;">${escapeHtml(entry.needs)}</div>`;
+    }
+
+    function renderMetricsFigure() {
+      const host = $("metrics-chart");
+      const note = $("metrics-chart-note");
+      host.innerHTML = "";
+      note.textContent = "";
+      const table = metricsTables ? metricsTables["by_model_prompt.csv"] : null;
+      if (!table || !table.exists) {
+        host.innerHTML = `<div class=\"muted\">No metrics yet. Click “Compute metrics”.</div>`;
+        return;
+      }
+      if (table.error) {
+        host.innerHTML = `<div class=\"muted\">Warning: failed to fully parse <code>by_model_prompt.csv</code> (${escapeHtml(table.error)}).</div>`;
+        return;
+      }
+      const metric = $("metrics-metric").value;
+      const rows = table.rows || [];
+      const base = metric.endsWith("_mean") ? metric.slice(0, -5) : metric;
+      const ciLoKey = `${base}_ci_lo`;
+      const ciHiKey = `${base}_ci_hi`;
+      const lowerBetter = base.includes("nll") || base.includes("latency") || base.includes("compression") || base.includes("bartscore");
+
+      const grouping = $("metrics-group").value || "model_prompt";
+      const compact = $("metrics-compact-labels").checked;
+      const topN = Math.max(5, Math.min(60, Number($("metrics-topn").value || 30)));
+      $("metrics-topn-label").textContent = String(topN);
+
+      // CI is only meaningful for the raw (model,prompt) rows (where CI columns exist).
+      $("metrics-ci").disabled = grouping !== "model_prompt";
+      if (grouping !== "model_prompt") $("metrics-ci").checked = false;
+      const showCi = $("metrics-ci").checked && grouping === "model_prompt";
+
+      const chartSorted = $("metrics-sort").checked;
+
+      function keyFor(r) {
+        if (grouping === "model") return String(r.model || "?");
+        if (grouping === "prompt") return String(r.prompt_id || "?");
+        return `${r.model || "?"} / ${r.prompt_id || "?"}`;
+      }
+
+      function ensureBaseOrder() {
+        if (baseOrderByGrouping[grouping]) return;
+        const order = [];
+        const seen = new Set();
+        for (const r of rows) {
+          const k = keyFor(r);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          order.push(k);
+        }
+        baseOrderByGrouping[grouping] = order;
+      }
+
+      // Aggregate (weighted by n when present).
+      const buckets = new Map();
+      for (const r of rows) {
+        const v = asNum(r[metric]);
+        if (v == null) continue;
+        const k = keyFor(r);
+        const n = Math.max(1, asNum(r["n"]) ?? 1);
+        const prev = buckets.get(k) || { sum: 0, w: 0, n: 0, any: r };
+        prev.sum += v * n;
+        prev.w += n;
+        prev.n += n;
+        prev.any = prev.any || r;
+        buckets.set(k, prev);
+      }
+
+      const parsed = [];
+      for (const [k, b] of buckets.entries()) {
+        const mean = b.w ? (b.sum / b.w) : null;
+        if (mean == null || !Number.isFinite(mean)) continue;
+        let lo = null;
+        let hi = null;
+        if (grouping === "model_prompt") {
+          lo = asNum(b.any[ciLoKey]);
+          hi = asNum(b.any[ciHiKey]);
+        }
+        parsed.push({ key: k, value: mean, ci_lo: lo, ci_hi: hi, n: b.n });
+      }
+
+      if (!parsed.length) {
+        host.innerHTML = `<div class=\"muted\">Metric <code>${escapeHtml(metric)}</code> has no numeric values (not computed or missing inputs).</div>`;
+        return;
+      }
+
+      ensureBaseOrder();
+      if (chartSorted) {
+        parsed.sort((a, b) => (lowerBetter ? a.value - b.value : b.value - a.value));
+      } else {
+        const order = baseOrderByGrouping[grouping] || [];
+        const idx = new Map(order.map((k, i) => [k, i]));
+        parsed.sort((a, b) => (idx.get(a.key) ?? 1e9) - (idx.get(b.key) ?? 1e9));
+      }
+      const shown = parsed.slice(0, topN);
+      note.textContent = `Showing ${shown.length} of ${parsed.length} · ${chartSorted ? "sorted" : "fixed order"} · ${lowerBetter ? "lower is better" : "higher is better"}`;
+
+      // Vertical "figure-like" plot: points with optional CI, scientific axes/grid.
+      const tooltip = ensureTooltip();
+      const container = document.createElement("div");
+      container.style.overflowX = "auto";
+      container.style.paddingBottom = "6px";
+
+      const minStep = compact ? 44 : 64;
+      const leftPad = 64;
+      const rightPad = 18;
+      const topPad = 22;
+      const bottomPad = compact ? 96 : 120;
+      const innerH = 520;
+      const hostW = Math.max(900, host.clientWidth || 0);
+      const n = shown.length;
+      const plotW = Math.max(240, hostW - leftPad - rightPad);
+      const naturalStep = n <= 1 ? plotW : plotW / (n - 1);
+      const step = Math.max(minStep, naturalStep);
+      const w = n <= 1 ? hostW : Math.max(hostW, leftPad + rightPad + step * (n - 1));
+      const h = topPad + innerH + bottomPad;
+
+      const values = shown.map((d) => d.value);
+      const minV = Math.min(...values);
+      const maxV = Math.max(...values);
+      const pad = (maxV - minV) * 0.08 || (Math.abs(maxV) * 0.08) || 1;
+      const y0 = minV - pad;
+      const y1 = maxV + pad;
+      const yScale = (v) => topPad + innerH - ((v - y0) / (y1 - y0)) * innerH;
+
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+      svg.style.width = `${w}px`;
+      svg.style.height = `${h}px`;
+      svg.style.display = "block";
+
+      const g = document.createElementNS(svg.namespaceURI, "g");
+      svg.appendChild(g);
+
+      // Y grid + ticks
+      const ticks = 5;
+      for (let i = 0; i <= ticks; i++) {
+        const t = i / ticks;
+        const yv = y0 + (1 - t) * (y1 - y0);
+        const y = yScale(yv);
+        const line = document.createElementNS(svg.namespaceURI, "line");
+        line.setAttribute("x1", String(leftPad));
+        line.setAttribute("x2", String(w - rightPad));
+        line.setAttribute("y1", String(y));
+        line.setAttribute("y2", String(y));
+        line.setAttribute("stroke", "rgba(231,236,255,0.12)");
+        line.setAttribute("stroke-width", "1");
+        g.appendChild(line);
+
+        const txt = document.createElementNS(svg.namespaceURI, "text");
+        txt.setAttribute("x", String(leftPad - 10));
+        txt.setAttribute("y", String(y + 4));
+        txt.setAttribute("text-anchor", "end");
+        txt.setAttribute("fill", "rgba(231,236,255,0.72)");
+        txt.setAttribute("font-size", "11");
+        txt.textContent = Number.isFinite(yv) ? yv.toFixed(3) : "";
+        g.appendChild(txt);
+      }
+
+      // Axes
+      const yAxis = document.createElementNS(svg.namespaceURI, "line");
+      yAxis.setAttribute("x1", String(leftPad));
+      yAxis.setAttribute("x2", String(leftPad));
+      yAxis.setAttribute("y1", String(topPad));
+      yAxis.setAttribute("y2", String(topPad + innerH));
+      yAxis.setAttribute("stroke", "rgba(231,236,255,0.22)");
+      yAxis.setAttribute("stroke-width", "1");
+      g.appendChild(yAxis);
+
+      const xAxis = document.createElementNS(svg.namespaceURI, "line");
+      xAxis.setAttribute("x1", String(leftPad));
+      xAxis.setAttribute("x2", String(w - rightPad));
+      xAxis.setAttribute("y1", String(topPad + innerH));
+      xAxis.setAttribute("y2", String(topPad + innerH));
+      xAxis.setAttribute("stroke", "rgba(231,236,255,0.22)");
+      xAxis.setAttribute("stroke-width", "1");
+      g.appendChild(xAxis);
+
+      const getColor = (rank) => {
+        const t = Math.max(0, Math.min(1, 1 - rank / Math.max(1, shown.length - 1)));
+        const a = [106, 166, 255];
+        const b = [66, 211, 146];
+        const c = a.map((x, i) => Math.round(x * (1 - t) + b[i] * t));
+        return `rgb(${c[0]},${c[1]},${c[2]})`;
+      };
+
+      const labelStride = Math.max(1, Math.ceil(shown.length / 14));
+      shown.forEach((d, idx) => {
+        const x = n <= 1 ? (leftPad + (w - leftPad - rightPad) / 2) : (leftPad + idx * step);
+        const y = yScale(d.value);
+
+        // Optional CI
+        if (showCi && d.ci_lo != null && d.ci_hi != null) {
+          const yLo = yScale(d.ci_lo);
+          const yHi = yScale(d.ci_hi);
+          const ci = document.createElementNS(svg.namespaceURI, "line");
+          ci.setAttribute("x1", String(x));
+          ci.setAttribute("x2", String(x));
+          ci.setAttribute("y1", String(yLo));
+          ci.setAttribute("y2", String(yHi));
+          ci.setAttribute("stroke", "rgba(231,236,255,0.75)");
+          ci.setAttribute("stroke-width", "1.5");
+          g.appendChild(ci);
+
+          const capW = 6;
+          const cap1 = document.createElementNS(svg.namespaceURI, "line");
+          cap1.setAttribute("x1", String(x - capW));
+          cap1.setAttribute("x2", String(x + capW));
+          cap1.setAttribute("y1", String(yLo));
+          cap1.setAttribute("y2", String(yLo));
+          cap1.setAttribute("stroke", "rgba(231,236,255,0.75)");
+          cap1.setAttribute("stroke-width", "1.5");
+          g.appendChild(cap1);
+
+          const cap2 = document.createElementNS(svg.namespaceURI, "line");
+          cap2.setAttribute("x1", String(x - capW));
+          cap2.setAttribute("x2", String(x + capW));
+          cap2.setAttribute("y1", String(yHi));
+          cap2.setAttribute("y2", String(yHi));
+          cap2.setAttribute("stroke", "rgba(231,236,255,0.75)");
+          cap2.setAttribute("stroke-width", "1.5");
+          g.appendChild(cap2);
+        }
+
+        // Point
+        const dot = document.createElementNS(svg.namespaceURI, "circle");
+        dot.setAttribute("cx", String(x));
+        dot.setAttribute("cy", String(y));
+        dot.setAttribute("r", compact ? "3.6" : "4.2");
+        dot.setAttribute("fill", getColor(idx));
+        dot.setAttribute("fill-opacity", "0.85");
+        dot.setAttribute("stroke", "rgba(0,0,0,0.35)");
+        dot.setAttribute("stroke-width", "1");
+        g.appendChild(dot);
+
+        // X labels (rotated, downsampled for readability)
+        if (idx % labelStride === 0) {
+          const lbl = document.createElementNS(svg.namespaceURI, "text");
+          lbl.setAttribute("x", String(x));
+          lbl.setAttribute("y", String(topPad + innerH + 12));
+          lbl.setAttribute("fill", "rgba(231,236,255,0.72)");
+          lbl.setAttribute("font-size", compact ? "10" : "11");
+          lbl.setAttribute("text-anchor", "end");
+          lbl.setAttribute("transform", `rotate(-60 ${x} ${topPad + innerH + 12})`);
+          const short = compact && d.key.length > 28 ? (d.key.slice(0, 28) + "…") : d.key;
+          lbl.textContent = short;
+          g.appendChild(lbl);
+        }
+
+        // Hover target
+        const hit = document.createElementNS(svg.namespaceURI, "rect");
+        hit.setAttribute("x", String(x - step / 2));
+        hit.setAttribute("y", String(topPad));
+        hit.setAttribute("width", String(step));
+        hit.setAttribute("height", String(innerH + bottomPad));
+        hit.setAttribute("fill", "transparent");
+        hit.addEventListener("mousemove", (ev) => {
+          const ciText = (showCi && d.ci_lo != null && d.ci_hi != null)
+            ? `<div class="muted">CI: ${d.ci_lo.toFixed(4)} → ${d.ci_hi.toFixed(4)}</div>`
+            : ``;
+          tooltip.innerHTML =
+            `<div style="font-weight:650;">${escapeHtml(d.key)}</div>` +
+            `<div class="muted">metric: <code>${escapeHtml(metric)}</code></div>` +
+            `<div>value: <strong>${d.value.toFixed(4)}</strong> · n=${d.n}</div>` +
+            ciText;
+          positionTooltip(tooltip, ev.clientX, ev.clientY);
+          tooltip.classList.remove("hidden");
+        });
+        hit.addEventListener("mouseleave", () => tooltip.classList.add("hidden"));
+        g.appendChild(hit);
+      });
+
+      container.appendChild(svg);
+      host.appendChild(container);
+    }
+
+    function renderMetricsTable() {
+      const host = $("metrics-table");
+      host.innerHTML = "";
+      $("metrics-table-count").textContent = "";
+      const name = $("metrics-table-select").value;
+      const table = metricsTables ? metricsTables[name] : null;
+      if (!table || !table.exists) {
+        host.innerHTML = `<div class=\"muted\">${escapeHtml(name)} not found (run metrics first).</div>`;
+        return;
+      }
+      if (table.error) {
+        const warn = document.createElement("div");
+        warn.className = "muted";
+        warn.innerHTML = `Warning: failed to fully parse <code>${escapeHtml(name)}</code> (${escapeHtml(table.error)}).`;
+        host.appendChild(warn);
+      }
+      const cols = table.columns || [];
+      let rows = table.rows || [];
+      if (!cols.length) {
+        host.innerHTML = `<div class=\"muted\">No columns in ${escapeHtml(name)}.</div>`;
+        return;
+      }
+
+      const q = ($("metrics-search").value || "").trim().toLowerCase();
+      if (q) {
+        rows = rows.filter((r) => {
+          for (const c of cols) {
+            const v = r[c];
+            if (v == null) continue;
+            if (String(v).toLowerCase().includes(q)) return true;
+          }
+          return false;
+        });
+      }
+
+      // Keep per_generation usable by default (it can be very wide).
+      let useCols = cols;
+      const showAllCols = $("metrics-show-all-cols").checked;
+      if (name === "per_generation.csv" && !showAllCols) {
+        const preferredCols = [
+          "model",
+          "prompt_id",
+          "doc_id",
+          "seed",
+          "rougeL_f",
+          "bleu",
+          "mean_nll",
+          "entropy_mean",
+          "compression_words",
+          "total_latency_s",
+          "output_toks_per_s",
+          "summary_len_words",
+          "summary",
+          "error",
+        ];
+        const keep = preferredCols.filter((c) => cols.includes(c));
+        if (keep.length) useCols = keep;
+      }
+
+      // Sorting (client-side; tables are intentionally truncated for the UI).
+      if (metricsSort.col && cols.includes(metricsSort.col)) {
+        const c = metricsSort.col;
+        const dir = metricsSort.dir;
+        rows = rows.slice().sort((a, b) => {
+          const av = a[c];
+          const bv = b[c];
+          const an = asNum(av);
+          const bn = asNum(bv);
+          if (an != null && bn != null) return (an - bn) * dir;
+          const as = (av == null ? "" : String(av));
+          const bs = (bv == null ? "" : String(bv));
+          return as.localeCompare(bs) * dir;
+        });
+      }
+
+      const tbl = document.createElement("table");
+      tbl.className = "table";
+      const thead = document.createElement("thead");
+      const trh = document.createElement("tr");
+      for (const c of useCols) {
+        const th = document.createElement("th");
+        const isActive = metricsSort.col === c;
+        const sortHtml = isActive ? ` <span class="sort">${metricsSort.dir === 1 ? "▲" : "▼"}</span>` : ``;
+        const help = columnHelp(name, c);
+        const helpHtml = help ? ` ${helpIcon(help)}` : ``;
+        th.innerHTML = `${escapeHtml(c)}${sortHtml}${helpHtml}`;
+        th.addEventListener("click", () => {
+          if (metricsSort.col === c) {
+            metricsSort.dir = metricsSort.dir === 1 ? -1 : 1;
+          } else {
+            metricsSort.col = c;
+            metricsSort.dir = 1;
+          }
+          renderMetricsTable();
+        });
+        trh.appendChild(th);
+      }
+      thead.appendChild(trh);
+      tbl.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      for (const r of rows) {
+        const tr = document.createElement("tr");
+        for (const c of useCols) {
+          const td = document.createElement("td");
+          const v = r[c];
+          const s = v == null ? "" : String(v);
+          const n = asNum(s);
+          if (n != null) td.classList.add("num");
+          if (c === "summary" || c === "error") td.classList.add("wrap");
+          if (s.length > 180 && c !== "summary" && c !== "error") {
+            td.title = s;
+            td.textContent = s.slice(0, 180) + "…";
+          } else {
+            td.textContent = s;
+          }
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      tbl.appendChild(tbody);
+      host.appendChild(tbl);
+
+      $("metrics-table-count").textContent = `Rows: ${rows.length}${q ? " (filtered)" : ""}`;
+      if (table.truncated) {
+        const note = document.createElement("div");
+        note.className = "muted";
+        note.textContent = "Table truncated for the UI (download CSV for full data).";
+        host.appendChild(note);
+      }
+
+      // Headers were recreated; re-bind tooltips for new help icons.
+      attachHelpTooltips();
+    }
+
+    function ensureTooltip() {
+      let el = document.getElementById("ui-tooltip");
+      if (el) return el;
+      el = document.createElement("div");
+      el.id = "ui-tooltip";
+      el.className = "tooltip hidden";
+      document.body.appendChild(el);
+      return el;
+    }
+
+    function positionTooltip(el, x, y) {
+      const pad = 14;
+      const rect = el.getBoundingClientRect();
+      let left = x + 14;
+      let top = y + 14;
+      if (left + rect.width > window.innerWidth - pad) left = x - rect.width - 14;
+      if (top + rect.height > window.innerHeight - pad) top = y - rect.height - 14;
+      el.style.left = `${Math.max(pad, left)}px`;
+      el.style.top = `${Math.max(pad, top)}px`;
+    }
+
+    $("metrics-table-select").addEventListener("change", () => {
+      renderMetricsTable();
+    });
+    $("metrics-metric").addEventListener("change", () => {
+      renderMetricExplainer();
+      renderMetricsFigure();
+      renderMetricsTable();
+    });
+    $("metrics-search").addEventListener("input", renderMetricsTable);
+    $("metrics-show-all-cols").addEventListener("change", () => {
+      localStorage.setItem(showAllColsKey, $("metrics-show-all-cols").checked ? "1" : "0");
+      renderMetricsTable();
+    });
+    $("metrics-group").addEventListener("change", renderMetricsFigure);
+    $("metrics-topn").addEventListener("input", renderMetricsFigure);
+    $("metrics-ci").addEventListener("change", renderMetricsFigure);
+    $("metrics-compact-labels").addEventListener("change", renderMetricsFigure);
+    $("metrics-sort").addEventListener("change", () => {
+      localStorage.setItem(metricsChartSortKey, $("metrics-sort").checked ? "1" : "0");
+      renderMetricsFigure();
+    });
+    $("metrics-compact-labels").addEventListener("change", () => {
+      localStorage.setItem(metricsCompactLabelsKey, $("metrics-compact-labels").checked ? "1" : "0");
+      renderMetricsFigure();
+    });
+
+    window.addEventListener("resize", () => {
+      if (!$("tab-metrics").classList.contains("hidden")) renderMetricsFigure();
+    });
+
+    function setGenBodyHeight(px) {
+      const val = Math.max(120, Math.min(650, Number(px) || 240));
+      document.documentElement.style.setProperty("--gen-body-max-h", `${val}px`);
+      $("gen-height").value = String(val);
+      $("gen-height-value").textContent = `${val}px`;
+      localStorage.setItem(genHeightKey, String(val));
+    }
+
+    $("gen-filter-model").addEventListener("change", renderGenerations);
+    $("gen-filter-prompt").addEventListener("change", renderGenerations);
+    $("gen-filter-seed").addEventListener("change", renderGenerations);
+    $("gen-filter-doc").addEventListener("input", renderGenerations);
+    $("gen-errors-only").addEventListener("change", renderGenerations);
+    $("gen-auto-scroll").addEventListener("change", renderGenerations);
+    $("gen-height").addEventListener("input", (e) => setGenBodyHeight(e.target.value));
+    setGenBodyHeight(localStorage.getItem(genHeightKey) || "240");
+
+    async function loop() {
+      await pollStatus();
+      await pollTail("events");
+      await pollTail("generations");
+      await pollTail("stdout");
+      await pollTail("stderr");
+      await pollTail("metrics_stdout");
+      await pollTail("metrics_stderr");
+      setTimeout(loop, 1000);
+    }
+    loop();
+
+    // Update elapsed timer locally (smooth, independent of poll interval).
+	    function startElapsedTimer() {
+	      if (runTimer) clearInterval(runTimer);
+	      runTimer = setInterval(() => {
+	        if (runStartMs == null) return;
+	        const end = runStopMs != null ? runStopMs : Date.now();
+	        const s = Math.max(0, Math.floor((end - runStartMs) / 1000));
+	        $("elapsed").textContent = fmtDur(s);
+	      }, 500);
+	    }
+    startElapsedTimer();
+
+    // If metrics already exist on disk, show them immediately.
+    refreshMetricsTables();
+    loadBaselinePrompts(baselinePromptsDir);
+
+    // Metrics selection UX
+    function setMetricsSelection(sel) {
+      $("m-reference").checked = !!sel.reference;
+      $("m-logprobs").checked = !!sel.logprobs;
+      $("m-embeddings").checked = !!sel.embeddings;
+      $("m-bertscore").checked = !!sel.bertscore;
+      $("m-bartscore").checked = !!sel.bartscore;
+      localStorage.setItem(metricsKey, JSON.stringify(sel));
+    }
+
+    function selectedMetrics() {
+      const out = [];
+      if ($("m-reference").checked) out.push("reference");
+      if ($("m-logprobs").checked) out.push("logprobs");
+      if ($("m-embeddings").checked) out.push("embeddings");
+      if ($("m-bertscore").checked) out.push("bertscore");
+      if ($("m-bartscore").checked) out.push("bartscore");
+      return out;
+    }
+
+    function loadMetricsSelection() {
+      try {
+        const raw = localStorage.getItem(metricsKey);
+        if (raw) setMetricsSelection(JSON.parse(raw));
+      } catch (_) {}
+    }
+
+    function applyMetricsPreset(kind) {
+      if (kind === "fast") {
+        setMetricsSelection({ reference: true, logprobs: true, embeddings: false, bertscore: false, bartscore: false });
+      } else if (kind === "embed") {
+        setMetricsSelection({ reference: true, logprobs: true, embeddings: true, bertscore: false, bartscore: false });
+      } else if (kind === "full") {
+        setMetricsSelection({ reference: true, logprobs: true, embeddings: true, bertscore: true, bartscore: true });
+      }
+    }
+
+    function renderMetricsMeta(meta) {
+      const el = $("metrics-meta");
+      if (!el) return;
+      if (!meta) {
+        el.textContent = "";
+        return;
+      }
+      const ts = meta.ts_utc ? String(meta.ts_utc) : "";
+      const computed = meta.computed ? Object.keys(meta.computed).filter((k) => meta.computed[k]) : [];
+      const elapsed = meta.elapsed_s != null && Number.isFinite(Number(meta.elapsed_s))
+        ? ` · took ${fmtDur(Math.round(Number(meta.elapsed_s)))}`
+        : ``;
+      el.textContent = `Last compute: ${ts || "unknown"}${elapsed} · groups: ${computed.join(", ") || "none"}`;
+      if (meta.elapsed_s != null && Number.isFinite(Number(meta.elapsed_s))) {
+        $("metrics-runtime").textContent = `last: ${fmtDur(Math.round(Number(meta.elapsed_s)))}`;
+      }
+    }
+
+    function refreshMetricsMetricOptions() {
+      const sel = $("metrics-metric");
+      const current = sel.value || "rougeL_f_mean";
+      const table = metricsTables ? metricsTables["by_model_prompt.csv"] : null;
+      const cols = (table && table.columns) ? table.columns : [];
+      const preferred = [
+        "rougeL_f_mean",
+        "rouge2_f_mean",
+        "rouge1_f_mean",
+        "bertscore_f1_mean",
+        "bleu_mean",
+        "mean_nll_mean",
+        "entropy_mean_mean",
+        "compression_words_mean",
+        "total_latency_s_mean",
+        "output_toks_per_s_mean",
+      ];
+
+      const out = [];
+      const seen = new Set();
+      for (const c of preferred) {
+        if (cols.includes(c)) {
+          out.push(c);
+          seen.add(c);
+        }
+      }
+      for (const c of cols) {
+        if (!c.endsWith("_mean")) continue;
+        if (seen.has(c)) continue;
+        out.push(c);
+      }
+      if (!out.length) out.push(...preferred);
+
+      sel.innerHTML = "";
+      for (const c of out) {
+        const opt = document.createElement("option");
+        opt.value = c;
+        opt.textContent = c;
+        sel.appendChild(opt);
+      }
+
+      if (Array.from(sel.options).some((o) => o.value === current)) {
+        sel.value = current;
+      } else if (sel.options.length) {
+        sel.value = sel.options[0].value;
+      }
+    }
+
+    $("metrics-preset-fast").addEventListener("click", () => applyMetricsPreset("fast"));
+    $("metrics-preset-embed").addEventListener("click", () => applyMetricsPreset("embed"));
+    $("metrics-preset-full").addEventListener("click", () => applyMetricsPreset("full"));
+    for (const id of ["m-reference", "m-logprobs", "m-embeddings", "m-bertscore", "m-bartscore"]) {
+      $(id).addEventListener("change", () => setMetricsSelection({
+        reference: $("m-reference").checked,
+        logprobs: $("m-logprobs").checked,
+        embeddings: $("m-embeddings").checked,
+        bertscore: $("m-bertscore").checked,
+        bartscore: $("m-bartscore").checked,
+      }));
+    }
+
+    loadMetricsSelection();
+    $("metrics-show-all-cols").checked = localStorage.getItem(showAllColsKey) === "1";
+    $("metrics-sort").checked = localStorage.getItem(metricsChartSortKey) !== "0";
+    $("metrics-compact-labels").checked = localStorage.getItem(metricsCompactLabelsKey) !== "0";
+    renderMetricExplainer();
+    decorateMetricFormLabels();
+  </script>
+{% endblock %}

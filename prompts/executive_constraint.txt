@@ -1,0 +1,1 @@
+Summarize the following text into exactly 3 bullet points. Each bullet point must be a single sentence. Do not use introductory phrases like 'The text says'. Start directly with the content.
